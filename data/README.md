@@ -1,36 +1,30 @@
 # Data Directory
 
-## Option A: Kaggle Dataset (Recommended)
+## Generating the Data
 
-Download from: https://www.kaggle.com/competitions/favorita-grocery-sales-forecasting/data
-
-1. Create a free Kaggle account
-2. Accept the competition rules
-3. Download all files (~480 MB compressed)
-4. Extract the CSVs into `data/raw/`
-
-You should end up with:
-```
-data/raw/
-├── train.csv
-├── test.csv
-├── stores.csv
-├── items.csv
-├── transactions.csv
-├── oil.csv
-├── holidays_events.csv
-└── sample_submission.csv
-```
-
-## Option B: Synthetic Data
-
-If you don't have a Kaggle account, run from the project root:
+This demo uses synthetic data. Run from the project root:
 
 ```bash
 python src/00_generate_synthetic_data.py
 ```
 
-This creates synthetic CSVs in `data/raw/` that mimic the Favorita structure.
+This creates the following CSVs in `data/raw/` using a fixed random seed (`numpy.random.default_rng(42)`),
+mimicking the Corporación Favorita grocery dataset structure:
+
+```
+data/raw/
+├── train.csv           # daily unit sales: date, store_nbr, item_nbr, unit_sales, onpromotion
+├── stores.csv          # store metadata (city, state, type, cluster)
+├── items.csv           # item metadata (family, class, perishable)
+├── transactions.csv    # daily transaction counts per store
+├── oil.csv             # daily oil price (economic indicator)
+└── holidays_events.csv # holidays with type and locale
+```
+
+> **Optional — Real Kaggle dataset:** If you want to run on the original Corporación Favorita
+> data (~125M rows), download it from
+> https://www.kaggle.com/competitions/favorita-grocery-sales-forecasting/data,
+> extract the CSVs into `data/raw/`, and skip step 0.
 
 ## Processed Data
 
