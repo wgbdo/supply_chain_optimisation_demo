@@ -261,7 +261,7 @@ def optimise_single_store(
         # ── Solve ─────────────────────────────────────────────────────────
         # CBC is the default open-source solver bundled with PuLP.
         # For larger problems, you'd switch to HiGHS or Gurobi.
-        prob.solve(pulp_apis=None)  # uses default CBC solver
+        prob.solve()  # uses default CBC solver
 
         if LpStatus[prob.status] != "Optimal":
             print(f"    WARNING: Store {store_nbr}, Week {week.date()}: solver status = {LpStatus[prob.status]}")

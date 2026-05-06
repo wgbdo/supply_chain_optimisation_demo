@@ -69,7 +69,9 @@ PERISHABLE_SHELF_LIFE_DAYS = 7
 NON_PERISHABLE_SHELF_LIFE_DAYS = 90
 
 # Warehouse capacity (total units across all SKUs for a single store)
-WAREHOUSE_CAPACITY_PER_STORE = 5000
+# Set to N_ITEMS × ~500 units to avoid infeasibility with the synthetic dataset
+# (50 items × ~366 avg weekly demand = ~18,000 units needed)
+WAREHOUSE_CAPACITY_PER_STORE = 100_000
 
 # Assumed lead time in days from supplier to warehouse
 DEFAULT_LEAD_TIME_DAYS = 3
