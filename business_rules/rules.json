@@ -1,0 +1,87 @@
+[
+  {
+    "rule_id": "DAVE_001",
+    "name": "Easter demand uplift",
+    "sku_pattern": "*",
+    "condition": {
+      "type": "holiday_upcoming",
+      "holiday_name": "Easter",
+      "lookahead_days": 7
+    },
+    "action": {
+      "type": "multiply_forecast",
+      "factor": 1.35
+    },
+    "rationale": "People order bigger boxes before the Easter long weekend. Dave always ordered 30-40% extra across all items."
+  },
+  {
+    "rule_id": "DAVE_002",
+    "name": "Christmas week surge",
+    "sku_pattern": "*",
+    "condition": {
+      "type": "holiday_upcoming",
+      "holiday_name": "Christmas",
+      "lookahead_days": 14
+    },
+    "action": {
+      "type": "multiply_forecast",
+      "factor": 1.50
+    },
+    "rationale": "Two weeks before Christmas, order volumes spike 40-60%. Suppliers also slow down so need to order earlier."
+  },
+  {
+    "rule_id": "DAVE_003",
+    "name": "Perishable bruising buffer",
+    "sku_pattern": "perishable",
+    "condition": {
+      "type": "always"
+    },
+    "action": {
+      "type": "multiply_order_qty",
+      "factor": 1.15
+    },
+    "rationale": "Roughly 10-15% of perishable items arrive damaged or expire before delivery. Dave always padded perishable orders."
+  },
+  {
+    "rule_id": "DAVE_004",
+    "name": "Hot weather demand drop",
+    "sku_pattern": "*",
+    "condition": {
+      "type": "temperature_above",
+      "threshold_celsius": 35
+    },
+    "action": {
+      "type": "multiply_forecast",
+      "factor": 0.90
+    },
+    "rationale": "In extreme heat (>35C), people eat lighter and order fewer heavy protein boxes. Dave would trim orders by ~10%."
+  },
+  {
+    "rule_id": "DAVE_005",
+    "name": "New item safety buffer",
+    "sku_pattern": "*",
+    "condition": {
+      "type": "item_age_weeks_below",
+      "threshold": 4
+    },
+    "action": {
+      "type": "multiply_safety_stock",
+      "factor": 1.50
+    },
+    "rationale": "New products have unpredictable demand. Dave always kept 50% extra safety stock for the first month."
+  },
+  {
+    "rule_id": "DAVE_006",
+    "name": "Payday demand bump",
+    "sku_pattern": "*",
+    "condition": {
+      "type": "week_contains_date",
+      "day_of_month": [15, 28, 29, 30, 31]
+    },
+    "action": {
+      "type": "multiply_forecast",
+      "factor": 1.10
+    },
+    "rationale": "Wages are paid fortnightly on the 15th and end-of-month. Dave noticed a ~10% order bump around paydays."
+  }
+]

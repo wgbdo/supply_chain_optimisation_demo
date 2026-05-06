@@ -1,0 +1,175 @@
+# Supply Chain Optimisation — End-to-End PoC Demo
+
+## Scenario: FreshBox Australia
+
+**FreshBox Australia** is a meal-kit and grocery-box delivery company based in Melbourne.
+They pack and deliver ~15,000 food boxes per week across Victoria, NSW, and Queensland.
+They carry ~200 SKUs (fresh produce, proteins, pantry items, packaging).
+
+Their long-tenured warehouse manager, Dave, is retiring. Dave keeps most replenishment
+logic in his head. The company needs to capture Dave's knowledge and build a system
+that new staff can rely on.
+
+This demo walks through every step of building that system — from raw data through
+to an interactive decision-support dashboard.
+
+---
+
+## Dataset
+
+We use the **Corporación Favorita Grocery Sales Forecasting** dataset from Kaggle.
+It contains ~125 million rows of daily unit sales across 54 stores and ~4,000 items,
+including perishable flags, promotions, holidays, oil prices, and store metadata.
+
+This is the closest public proxy to a food-box company: real grocery data, perishable
+items, promotional effects, and holiday spikes.
+
+### Download
+
+1. Go to: https://www.kaggle.com/competitions/favorita-grocery-sales-forecasting/data
+2. Accept the competition rules (requires free Kaggle account)
+3. Download all files (~480 MB compressed)
+4. Extract into `data/raw/`:
+
+```
+data/raw/
+├── train.csv              # ~125M rows: date, store, item, unit_sales, onpromotion
+├── test.csv               # future dates to predict
+├── stores.csv             # store metadata (city, state, type, cluster)
+├── items.csv              # item metadata (family, class, perishable)
+├── transactions.csv       # daily transaction counts per store
+├── oil.csv                # daily oil price (economic indicator)
+├── holidays_events.csv    # holidays with transfer/bridge logic
+└── sample_submission.csv
+```
+
+**Alternative (no Kaggle account):** Run `python src/00_generate_synthetic_data.py`
+to generate a synthetic dataset that mimics the Favorita structure. The demo works
+identically on either dataset.
+
+---
+
+## Project Structure
+
+```
+supply_chain_optimisation/
+├── README.md                              ← you are here
+├── requirements.txt                       ← Python dependencies
+├── config/
+│   └── settings.py                        ← central configuration
+├── data/
+│   ├── raw/                               ← put Kaggle CSVs here (or run synthetic generator)
+│   ├── processed/                         ← intermediate outputs (auto-created)
+│   └── README.md                          ← download instructions
+├── business_rules/
+│   └── rules.json                         ← Dave's expert rules (SME knowledge)
+├── src/
+│   ├── 00_generate_synthetic_data.py      ← fallback: generate synthetic data
+│   ├── 01_data_prep.py                    ← load, clean, aggregate raw data
+│   ├── 02_eda.py                          ← exploratory data analysis + plots
+│   ├── 03_feature_engineering.py          ← build ML features from raw data
+│   ├── 04_demand_forecasting.py           ← train demand forecast models
+│   ├── 05_business_rules.py               ← apply SME business rules
+│   ├── 06_inventory_optimisation.py       ← mathematical optimisation (PuLP)
+│   ├── 07_evaluation.py                   ← backtest and score the pipeline
+│   └── 08_dashboard.py                    ← Streamlit decision-support UI
+├── mock_scenario_and_implementation.md    ← detailed narrative walkthrough
+└── supply_chain_optimisation_recommendations.md  ← strategic recommendations
+```
+
+---
+
+## Quick Start
+
+### 1. Environment Setup
+
+```bash
+# Create a virtual environment (Python 3.10+ required)
+python3 -m venv .venv
+source .venv/bin/activate   # macOS / Linux
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 2. Get the Data
+
+**Option A — Kaggle dataset (recommended):**
+- Download from https://www.kaggle.com/competitions/favorita-grocery-sales-forecasting/data
+- Extract CSVs into `data/raw/`
+
+**Option B — Synthetic data (no account needed):**
+```bash
+python src/00_generate_synthetic_data.py
+```
+
+### 3. Run the Pipeline
+
+Run each step in order. Each script reads from the previous step's output:
+
+```bash
+# Step 1: Clean and aggregate raw data
+python src/01_data_prep.py
+
+# Step 2: Exploratory analysis (generates plots in data/processed/plots/)
+python src/02_eda.py
+
+# Step 3: Build ML features
+python src/03_feature_engineering.py
+
+# Step 4: Train demand forecast models
+python src/04_demand_forecasting.py
+
+# Step 5: Apply Dave's business rules
+python src/05_business_rules.py
+
+# Step 6: Run inventory optimisation
+python src/06_inventory_optimisation.py
+
+# Step 7: Backtest and evaluate
+python src/07_evaluation.py
+```
+
+### 4. Launch the Dashboard
+
+```bash
+streamlit run src/08_dashboard.py
+```
+
+Open http://localhost:8501 in your browser.
+
+---
+
+## What Each Step Does
+
+| Step | Script | What it does | Key concepts |
+|------|--------|-------------|--------------|
+| 0 | `00_generate_synthetic_data.py` | Generates synthetic grocery data if you don't have Kaggle access | — |
+| 1 | `01_data_prep.py` | Loads CSVs, handles missing values, aggregates daily → weekly, joins metadata | Data wrangling |
+| 2 | `02_eda.py` | Plots demand patterns, seasonality, perishable vs non-perishable trends | Exploratory analysis |
+| 3 | `03_feature_engineering.py` | Creates lag features, rolling stats, calendar features, promotion flags | Feature engineering for time series |
+| 4 | `04_demand_forecasting.py` | Trains LightGBM quantile regression models (q10, q50, q90) | Probabilistic forecasting |
+| 5 | `05_business_rules.py` | Applies SME heuristics (Dave's rules) as forecast adjustments | Knowledge capture |
+| 6 | `06_inventory_optimisation.py` | Solves a mixed-integer program for optimal order quantities | Mathematical optimisation (MIP) |
+| 7 | `07_evaluation.py` | Backtests the full pipeline against actuals; computes MAPE, fill rate, waste | Model evaluation |
+| 8 | `08_dashboard.py` | Interactive Streamlit app showing recommendations with explanations | Decision support |
+
+---
+
+## Glossary of Key Terms
+
+| Term | Meaning |
+|------|---------|
+| **SKU** | Stock Keeping Unit — a unique identifier for each product |
+| **Quantile forecast** | Instead of a single "best guess", predict the 10th/50th/90th percentile of demand. The 90th percentile means "there's only a 10% chance demand exceeds this" |
+| **Safety stock** | Extra inventory held as a buffer against demand uncertainty. Derived from the gap between q50 (median) and q90 (high scenario) forecasts |
+| **MOQ** | Minimum Order Quantity — the smallest amount a supplier will sell |
+| **Lead time** | Days between placing an order and receiving it |
+| **Fill rate** | % of demand that was met from available stock (target: >98%) |
+| **MAPE** | Mean Absolute Percentage Error — measures forecast accuracy (lower is better) |
+| **MIP** | Mixed-Integer Programming — an optimisation technique where some variables must be whole numbers (e.g. "order 500 units", not "order 500.7 units") |
+| **Newsvendor model** | A classic single-period inventory model that balances overage cost (waste) vs underage cost (stockout) |
+| **FEFO** | First Expired, First Out — for perishables, use the stock closest to expiry first |
+| **(s, S) policy** | Reorder policy: when inventory drops to level 's', order enough to bring it up to level 'S' |
+| **Objective function** | The thing the optimiser is trying to minimise (or maximise) — here, total cost |
+| **Constraint** | A rule the optimiser must obey — e.g. "order at least MOQ" or "don't exceed warehouse capacity" |
