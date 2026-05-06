@@ -73,6 +73,7 @@ from config.settings import (
     DEFAULT_MOQ,
     NON_PERISHABLE_SHELF_LIFE_DAYS,
     PERISHABLE_SHELF_LIFE_DAYS,
+    PERISHABLE_WASTE_COST_MULTIPLIER,
     STOCKOUT_COST_PER_UNIT,
     WAREHOUSE_CAPACITY_PER_STORE,
     WASTE_COST_PER_UNIT,
@@ -206,14 +207,23 @@ def optimise_single_store(
             for i in items
         }
 
+        # Effective waste cost per unit: perishable waste costs more because of
+        # disposal, lost margin, and short shelf life risk.
+        effective_waste_cost = {
+            i: WASTE_COST_PER_UNIT * (PERISHABLE_WASTE_COST_MULTIPLIER if is_perishable.get(i, 0) == 1 else 1.0)
+            for i in items
+        }
+
         # Order qty multiplier from business rules (e.g. bruising buffer)
         oqm = dict(zip(week_data["item_nbr"], week_data.get("order_qty_multiplier", pd.Series(1.0, index=week_data.index))))
 
         # ── Objective function ────────────────────────────────────────────
         # Total cost = procurement + expected waste + expected stockout
+        # Perishable items use effective_waste_cost (higher) to discourage
+        # over-ordering items that will expire before the next order cycle.
         prob += (
             lpSum(AVG_PROCUREMENT_COST * order_qty[i] for i in items)
-            + lpSum(WASTE_COST_PER_UNIT * waste_prob[i] * overstock[i] for i in items)
+            + lpSum(effective_waste_cost[i] * waste_prob[i] * overstock[i] for i in items)
             + lpSum(STOCKOUT_COST_PER_UNIT * understock[i] for i in items)
         ), "Total_Cost"
 
@@ -284,6 +294,7 @@ def optimise_single_store(
                     "family": row["family"],
                     "perishable": row["perishable"],
                     "on_hand": on_hand[i],
+                    "forecast_q10": row["forecast_q10"],
                     "forecast_q50": row["forecast_q50"],
                     "forecast_q90": row["forecast_q90"],
                     "adjusted_q50": row["adjusted_q50"],

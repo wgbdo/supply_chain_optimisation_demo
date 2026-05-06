@@ -36,6 +36,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import DATA_PROCESSED, RULES_PATH
+from src.business_rules_utils import apply_rules, check_condition, check_sku_pattern  # noqa: F401
 
 
 def load_rules() -> list[dict]:
@@ -45,118 +46,6 @@ def load_rules() -> list[dict]:
     print(f"  Loaded {len(rules)} business rules from {RULES_PATH}")
     return rules
 
-
-def check_condition(rule: dict, row: pd.Series) -> bool:
-    """
-    Evaluate whether a rule's condition is met for a given data row.
-
-    In a production system, you'd use a proper rule engine (e.g. business-rules,
-    Drools, or a simple DSL). For this PoC, we interpret the JSON conditions
-    directly.
-    """
-    condition = rule["condition"]
-    ctype = condition["type"]
-
-    if ctype == "always":
-        return True
-
-    elif ctype == "holiday_upcoming":
-        # Check if the week's holiday_name contains the target holiday
-        target = condition["holiday_name"].lower()
-        return target in row.get("holiday_name", "").lower()
-
-    elif ctype == "temperature_above":
-        # For this demo, we don't have temperature data, so we skip this rule.
-        # In production, you'd join weather forecast data.
-        return False
-
-    elif ctype == "item_age_weeks_below":
-        # We don't track item introduction dates in this demo.
-        # In production, you'd compute weeks since first sale.
-        return False
-
-    elif ctype == "week_contains_date":
-        # Check if the week start's day-of-month falls in the target list
-        dom = row["week_start"].day
-        return dom in condition.get("day_of_month", [])
-
-    return False
-
-
-def check_sku_pattern(rule: dict, row: pd.Series) -> bool:
-    """
-    Check if a rule applies to this item based on sku_pattern.
-
-    Patterns:
-      "*"           → applies to all items
-      "perishable"  → only perishable items (perishable == 1)
-    """
-    pattern = rule["sku_pattern"]
-
-    if pattern == "*":
-        return True
-    elif pattern == "perishable":
-        return row.get("perishable", 0) == 1
-
-    return False
-
-
-def apply_rules(row: pd.Series, rules: list[dict]) -> dict:
-    """
-    Apply all matching rules to a single forecast row.
-
-    Returns adjusted forecasts and metadata about which rules fired.
-
-    CONCEPT — Rule Stacking:
-      Multiple rules can fire for the same row. Their effects stack
-      multiplicatively. For example:
-        - Easter uplift: ×1.35
-        - Perishable bruising buffer: ×1.15
-        → Combined effect: ×1.35 × 1.15 = ×1.55
-
-      This matches how Dave would think: "It's Easter AND it's perishable,
-      so I need even more buffer."
-    """
-    forecast_multiplier = 1.0
-    order_qty_multiplier = 1.0
-    safety_stock_multiplier = 1.0
-    rules_applied = []
-    explanations = []
-
-    for rule in rules:
-        # Check if this rule matches the SKU and condition
-        if not check_sku_pattern(rule, row):
-            continue
-        if not check_condition(rule, row):
-            continue
-
-        # Apply the action
-        action = rule["action"]
-        atype = action["type"]
-
-        if atype == "multiply_forecast":
-            forecast_multiplier *= action["factor"]
-        elif atype == "multiply_order_qty":
-            order_qty_multiplier *= action["factor"]
-        elif atype == "multiply_safety_stock":
-            safety_stock_multiplier *= action["factor"]
-
-        rules_applied.append(rule["rule_id"])
-        explanations.append(f"[{rule['rule_id']}] {rule['name']}: {rule['rationale']}")
-
-    # Apply adjustments to the forecast values
-    adjusted_q50 = row["forecast_q50"] * forecast_multiplier
-    adjusted_q90 = row["forecast_q90"] * forecast_multiplier
-
-    return {
-        "adjusted_q50": adjusted_q50,
-        "adjusted_q90": adjusted_q90,
-        "order_qty_multiplier": order_qty_multiplier,
-        "safety_stock_multiplier": safety_stock_multiplier,
-        "forecast_multiplier": forecast_multiplier,
-        "rules_applied": "|".join(rules_applied) if rules_applied else "",
-        "explanations": " // ".join(explanations) if explanations else "No rules applied — using base ML forecast.",
-    }
 
 
 def main():

@@ -69,9 +69,14 @@ PERISHABLE_SHELF_LIFE_DAYS = 7
 NON_PERISHABLE_SHELF_LIFE_DAYS = 90
 
 # Warehouse capacity (total units across all SKUs for a single store)
-# Set to N_ITEMS × ~500 units to avoid infeasibility with the synthetic dataset
-# (50 items × ~366 avg weekly demand = ~18,000 units needed)
-WAREHOUSE_CAPACITY_PER_STORE = 100_000
+# ~30,000 is tight enough to bind on peak weeks (holiday uplifts pushing demand
+# to ~27,000+) without causing infeasibility on normal weeks (~18,300 avg)
+WAREHOUSE_CAPACITY_PER_STORE = 30_000
+
+# Perishable waste cost multiplier: perishable overstock costs this many times
+# more than non-perishable overstock, because of short shelf life / disposal.
+# Used in the MIP objective to penalise over-ordering perishable items more heavily.
+PERISHABLE_WASTE_COST_MULTIPLIER = 2.5
 
 # Assumed lead time in days from supplier to warehouse
 DEFAULT_LEAD_TIME_DAYS = 3

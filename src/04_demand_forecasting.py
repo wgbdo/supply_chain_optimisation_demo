@@ -130,12 +130,13 @@ def train_quantile_model(
     model = lgb.LGBMRegressor(
         objective="quantile",
         alpha=quantile,  # the quantile to target
-        n_estimators=500,
-        learning_rate=0.05,
-        num_leaves=31,  # controls model complexity (higher = more flexible)
-        min_child_samples=20,  # minimum data points in a leaf (regularisation)
+        n_estimators=1000,
+        learning_rate=0.03,
+        num_leaves=63,   # increased from 31 — more expressive model
+        min_child_samples=10,  # lower regularisation — allows finer splits
         subsample=0.8,  # use 80% of data per tree (reduces overfitting)
         colsample_bytree=0.8,  # use 80% of features per tree
+        n_jobs=-1,       # parallel training
         random_state=42,
         verbose=-1,  # suppress training logs
     )
@@ -233,6 +234,19 @@ def main():
         preds = model.predict(X_test)
         # Clip to non-negative (demand can't be negative)
         test[f"forecast_{q_label}"] = np.clip(preds, 0, None)
+
+    # ── Bias correction ──────────────────────────────────────────────────
+    # The q50 model may systematically over- or under-forecast on the training
+    # set. We measure this bias and subtract it from all quantile predictions
+    # to re-centre the forecast. This is a simple but effective post-processing
+    # step that does not require retraining.
+    print("\nApplying bias correction...")
+    train_preds_q50 = models["q50"].predict(X_train)
+    bias_correction = float((train_preds_q50 - y_train.values).mean())
+    print(f"  Training set bias: {bias_correction:+.2f} units (positive = over-forecasting)")
+    for col in ["forecast_q10", "forecast_q50", "forecast_q90"]:
+        test[col] = np.clip(test[col] - bias_correction, 0, None)
+    print(f"  Bias correction applied to forecast_q10, q50, q90")
 
     # Evaluate
     metrics = evaluate_forecasts(test)

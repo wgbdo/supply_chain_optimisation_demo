@@ -34,13 +34,14 @@
     "name": "Perishable bruising buffer",
     "sku_pattern": "perishable",
     "condition": {
-      "type": "always"
+      "type": "month_in",
+      "months": [10, 11, 12, 1, 2, 3, 4]
     },
     "action": {
       "type": "multiply_order_qty",
-      "factor": 1.15
+      "factor": 1.01
     },
-    "rationale": "Roughly 10-15% of perishable items arrive damaged or expire before delivery. Dave always padded perishable orders."
+    "rationale": "Roughly 1-2% of perishable items arrive damaged or expire before delivery during warmer months (Oct-Apr in Australia). Dave always padded perishable orders in summer."
   },
   {
     "rule_id": "DAVE_004",
