@@ -164,6 +164,11 @@ def evaluate_forecasts(test: pd.DataFrame) -> dict:
 
     mae = mean_absolute_error(actuals, pred_q50)
     mape = mean_absolute_percentage_error(actuals, pred_q50) * 100
+
+    # sMAPE: symmetric MAPE — bounded [0, 200%], less dominated by low-volume items
+    denom = (np.abs(actuals) + np.abs(pred_q50)).replace(0, np.nan)
+    smape = (2 * np.abs(actuals - pred_q50) / denom).mean() * 100
+
     coverage = ((actuals >= pred_q10) & (actuals <= pred_q90)).mean() * 100
 
     # Bias: positive = over-forecasting on average
@@ -172,6 +177,7 @@ def evaluate_forecasts(test: pd.DataFrame) -> dict:
     return {
         "MAE": mae,
         "MAPE": mape,
+        "sMAPE": smape,
         "Coverage_80pct": coverage,
         "Bias": bias,
     }
@@ -211,8 +217,17 @@ def main():
     print("\nSplitting data...")
     train, test = temporal_train_test_split(df)
 
-    X_train = train[FEATURE_COLS]
-    y_train = train[TARGET_COL]
+    # Reserve last 10% of training weeks as calibration set for split-conformal
+    # prediction intervals. Models are trained only on the remaining 90%.
+    train_weeks_sorted = sorted(train["week_start"].unique())
+    n_calib_weeks = max(4, int(len(train_weeks_sorted) * 0.10))
+    calib_start_week = train_weeks_sorted[-n_calib_weeks]
+    calib = train[train["week_start"] >= calib_start_week].copy()
+    train_fit = train[train["week_start"] < calib_start_week].copy()
+    print(f"  Calib: {len(calib):,} rows ({n_calib_weeks} weeks held out for conformal intervals)")
+
+    X_train = train_fit[FEATURE_COLS]
+    y_train = train_fit[TARGET_COL]
     X_test = test[FEATURE_COLS]
 
     # Train one model per quantile
@@ -247,7 +262,27 @@ def main():
     for col in ["forecast_q10", "forecast_q50", "forecast_q90"]:
         test[col] = np.clip(test[col] - bias_correction, 0, None)
     print(f"  Bias correction applied to forecast_q10, q50, q90")
-
+    # ── Conformal prediction interval adjustment ────────────────────────────────
+    # Split-conformal regression: use the calibration set to find the smallest
+    # symmetric widening of [q10, q90] that achieves 80% empirical coverage.
+    #
+    # Nonconformity score for each calibration point:
+    #   s = max(q10(x) - y,  y - q90(x))
+    # s > 0 means the actual fell outside the interval.
+    # The (80th percentile) of {s_i} is the adjustment needed.
+    print("\nApplying conformal prediction interval adjustment...")
+    X_calib = calib[FEATURE_COLS]
+    y_calib = calib[TARGET_COL].values
+    calib_q10 = np.clip(models["q10"].predict(X_calib) - bias_correction, 0, None)
+    calib_q90 = np.clip(models["q90"].predict(X_calib) - bias_correction, 0, None)
+    scores = np.maximum(calib_q10 - y_calib, y_calib - calib_q90)
+    n_calib = len(scores)
+    idx = min(int(np.ceil((n_calib + 1) * 0.80)) - 1, n_calib - 1)
+    adjustment = max(0.0, float(np.sort(scores)[idx]))
+    print(f"  Calibration set size: {n_calib:,} rows")
+    print(f"  Conformal adjustment: {adjustment:+.2f} units (widens q10 down / q90 up)")
+    test["forecast_q10"] = np.clip(test["forecast_q10"] - adjustment, 0, None)
+    test["forecast_q90"] = test["forecast_q90"] + adjustment
     # Evaluate
     metrics = evaluate_forecasts(test)
     print("\nForecast Accuracy Metrics:")

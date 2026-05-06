@@ -62,6 +62,7 @@ from pulp import (
     LpProblem,
     LpStatus,
     LpVariable,
+    PULP_CBC_CMD,
     lpSum,
     value,
 )
@@ -196,9 +197,21 @@ def optimise_single_store(
 
         # Look up data for each item (as dicts for fast access in the loop)
         on_hand = dict(zip(week_data["item_nbr"], week_data["on_hand"]))
-        demand = dict(zip(week_data["item_nbr"], week_data["adjusted_q50"]))
+        demand_q50 = dict(zip(week_data["item_nbr"], week_data["adjusted_q50"]))
+        demand_q10 = dict(zip(week_data["item_nbr"], week_data["forecast_q10"]))
         safety = dict(zip(week_data["item_nbr"], week_data["safety_stock"]))
         is_perishable = dict(zip(week_data["item_nbr"], week_data["perishable"]))
+
+        # For perishable items use ~q40 as base demand (conservative ordering to
+        # avoid waste on short-shelf-life products). Approximated by linear
+        # interpolation between q10 (=0.10) and q50 (=0.50):
+        #   q40 = q10 + 0.75 * (q50 - q10)   [since (0.40-0.10)/(0.50-0.10) = 0.75]
+        demand = {
+            i: max(0.0, demand_q10[i] + 0.75 * (demand_q50[i] - demand_q10[i]))
+            if is_perishable.get(i, 0) == 1
+            else demand_q50[i]
+            for i in items
+        }
 
         # Waste probability: perishables have a higher chance of overstock turning
         # into waste (shorter shelf life). We use 40% for perishable, 10% for non.
@@ -270,8 +283,8 @@ def optimise_single_store(
 
         # ── Solve ─────────────────────────────────────────────────────────
         # CBC is the default open-source solver bundled with PuLP.
-        # For larger problems, you'd switch to HiGHS or Gurobi.
-        prob.solve()  # uses default CBC solver
+        # msg=False suppresses the verbose per-solve log.
+        prob.solve(PULP_CBC_CMD(msg=False))
 
         if LpStatus[prob.status] != "Optimal":
             print(f"    WARNING: Store {store_nbr}, Week {week.date()}: solver status = {LpStatus[prob.status]}")

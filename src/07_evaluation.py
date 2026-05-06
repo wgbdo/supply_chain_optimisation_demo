@@ -69,6 +69,10 @@ def compute_forecast_metrics(plan: pd.DataFrame) -> dict:
     mask = actuals > 0
     mape = (np.abs(actuals[mask] - q50[mask]) / actuals[mask]).mean() * 100
 
+    # sMAPE: symmetric MAPE — bounded [0, 200%], fairer for low-volume items
+    denom = (np.abs(actuals) + np.abs(q50)).replace(0, np.nan)
+    smape = (2 * np.abs(actuals - q50) / denom).mean() * 100
+
     # Bias: positive = model over-forecasts, negative = under-forecasts
     bias = (q50 - actuals).mean()
     bias_pct = (bias / actuals.mean()) * 100
@@ -82,6 +86,7 @@ def compute_forecast_metrics(plan: pd.DataFrame) -> dict:
 
     return {
         "MAPE (%)": round(mape, 2),
+        "sMAPE (%)": round(smape, 2),
         "Bias (units)": round(bias, 1),
         "Bias (%)": round(bias_pct, 2),
         "80% Interval Coverage (%)": round(coverage, 2),

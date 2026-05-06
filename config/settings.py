@@ -84,9 +84,14 @@ PERISHABLE_SHELF_LIFE_DAYS = 7
 NON_PERISHABLE_SHELF_LIFE_DAYS = 90
 
 # Warehouse capacity (total units across all SKUs for a single store)
-# ~30,000 is tight enough to bind on peak weeks (holiday uplifts pushing demand
-# to ~27,000+) without causing infeasibility on normal weeks (~18,300 avg)
-WAREHOUSE_CAPACITY_PER_STORE = 500_000  # scaled up for real Favorita data (~691 avg units × 49 items = ~34k/week)
+# 60,000 ≈ 49 items × 529 avg units × 2 weeks — tight enough to act as a
+# natural brake on over-ordering without causing infeasibility.
+WAREHOUSE_CAPACITY_PER_STORE = 60_000
+
+# Minimum average weekly demand (units/week) to treat an item as non-intermittent.
+# Items below this threshold have sporadic demand unsuitable for LightGBM
+# quantile regression and are excluded from the pipeline.
+MIN_MEDIAN_WEEKLY_DEMAND = 20
 
 # Perishable waste cost multiplier: perishable overstock costs this many times
 # more than non-perishable overstock, because of short shelf life / disposal.

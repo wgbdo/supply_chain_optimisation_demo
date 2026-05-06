@@ -22,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config.settings import AGG_FREQ, DATA_PROCESSED, N_ITEMS, N_STORES, RAW_DATA_SOURCE
+from config.settings import AGG_FREQ, DATA_PROCESSED, MIN_MEDIAN_WEEKLY_DEMAND, N_ITEMS, N_STORES, RAW_DATA_SOURCE
 
 
 def load_raw_data() -> dict[str, pd.DataFrame]:
@@ -36,11 +36,12 @@ def load_raw_data() -> dict[str, pd.DataFrame]:
     print(f"  Source: {RAW_DATA_SOURCE}")
 
     # The main sales file can be large (~125M rows for real Favorita data).
-    # We use dtype hints to reduce memory footprint.
+    # parse_dates on 125M rows causes a 957 MB intermediate allocation; instead
+    # we load date as str and convert AFTER filtering down to the subset we need.
     train = pd.read_csv(
         RAW_DATA_SOURCE / "train.csv",
-        parse_dates=["date"],
         dtype={
+            "date": "str",
             "store_nbr": "int16",
             "item_nbr": "int32",
             "onpromotion": "object",  # may have NaNs in real data
@@ -85,9 +86,23 @@ def filter_top_items(train: pd.DataFrame, items: pd.DataFrame) -> tuple:
         .index.tolist()
     )
 
-    # Top items by sales volume
+    # Exclude intermittent items before ranking.
+    # Items with low average weekly demand are unsuitable for LightGBM quantile
+    # regression (insufficient signal) and are better handled by Croston's method.
+    # ISO date strings (YYYY-MM-DD) sort correctly, so string min/max is accurate.
+    date_min = pd.to_datetime(train["date"].min())
+    date_max = pd.to_datetime(train["date"].max())
+    date_range = date_max - date_min
+    n_weeks = max(1, date_range.days / 7)
+    item_avg_weekly = train.groupby("item_nbr")["unit_sales"].sum() / n_weeks
+    non_intermittent_items = item_avg_weekly[item_avg_weekly >= MIN_MEDIAN_WEEKLY_DEMAND].index
+    n_intermittent = len(item_avg_weekly) - len(non_intermittent_items)
+    print(f"  Excluded {n_intermittent:,} intermittent items (avg weekly demand < {MIN_MEDIAN_WEEKLY_DEMAND} units)")
+
+    # Top items by sales volume — ranked only among non-intermittent items
     top_items = (
-        train.groupby("item_nbr")["unit_sales"]
+        train[train["item_nbr"].isin(non_intermittent_items)]
+        .groupby("item_nbr")["unit_sales"]
         .sum()
         .nlargest(N_ITEMS)
         .index.tolist()
@@ -214,6 +229,10 @@ def main():
     train_filtered, items_filtered, top_stores = filter_top_items(
         data["train"], data["items"]
     )
+
+    # Convert date column now that we're on the small filtered subset.
+    # Doing it before filtering would allocate ~957 MB for 125M rows.
+    train_filtered["date"] = pd.to_datetime(train_filtered["date"])
 
     # Clean
     train_clean = clean_sales(train_filtered)
