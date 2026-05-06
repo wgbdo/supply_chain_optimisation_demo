@@ -22,7 +22,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config.settings import AGG_FREQ, DATA_PROCESSED, DATA_RAW, N_ITEMS, N_STORES
+from config.settings import AGG_FREQ, DATA_PROCESSED, N_ITEMS, N_STORES, RAW_DATA_SOURCE
 
 
 def load_raw_data() -> dict[str, pd.DataFrame]:
@@ -33,11 +33,12 @@ def load_raw_data() -> dict[str, pd.DataFrame]:
     CDS Views / OData / Fivetran and pull the equivalent tables.
     """
     print("Loading raw data...")
+    print(f"  Source: {RAW_DATA_SOURCE}")
 
     # The main sales file can be large (~125M rows for real Favorita data).
     # We use dtype hints to reduce memory footprint.
     train = pd.read_csv(
-        DATA_RAW / "train.csv",
+        RAW_DATA_SOURCE / "train.csv",
         parse_dates=["date"],
         dtype={
             "store_nbr": "int16",
@@ -46,11 +47,11 @@ def load_raw_data() -> dict[str, pd.DataFrame]:
         },
     )
 
-    stores = pd.read_csv(DATA_RAW / "stores.csv")
-    items = pd.read_csv(DATA_RAW / "items.csv")
+    stores = pd.read_csv(RAW_DATA_SOURCE / "stores.csv")
+    items = pd.read_csv(RAW_DATA_SOURCE / "items.csv")
 
     holidays = pd.read_csv(
-        DATA_RAW / "holidays_events.csv", parse_dates=["date"]
+        RAW_DATA_SOURCE / "holidays_events.csv", parse_dates=["date"]
     )
 
     print(f"  train.csv:    {len(train):>12,} rows")

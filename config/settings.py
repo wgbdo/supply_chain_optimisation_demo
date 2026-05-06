@@ -9,11 +9,26 @@ from pathlib import Path
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DATA_RAW = PROJECT_ROOT / "data" / "raw"
+DATA_RAW = PROJECT_ROOT / "data" / "raw"          # synthetic data output / fallback
 DATA_PROCESSED = PROJECT_ROOT / "data" / "processed"
 PLOTS_DIR = DATA_PROCESSED / "plots"
 MODELS_DIR = DATA_PROCESSED / "models"
 RULES_PATH = PROJECT_ROOT / "business_rules" / "rules.json"
+
+# Optional: path to real Kaggle Favorita CSVs.
+# If this directory exists and contains train.csv, the pipeline will read from
+# here instead of data/raw/ (which holds synthetic data).
+# Set to None to always use synthetic data.
+KAGGLE_DATA_PATH = Path(
+    r"C:\Users\Wilter.Grobler\OneDrive - BDO\Documents\Youfoodz\kaggle_data_files"
+)
+
+# Resolved raw data source: use Kaggle data if available, otherwise synthetic
+RAW_DATA_SOURCE = (
+    KAGGLE_DATA_PATH
+    if KAGGLE_DATA_PATH is not None and (KAGGLE_DATA_PATH / "train.csv").exists()
+    else DATA_RAW
+)
 
 # Create output directories if they don't exist
 for d in [DATA_PROCESSED, PLOTS_DIR, MODELS_DIR]:
@@ -71,7 +86,7 @@ NON_PERISHABLE_SHELF_LIFE_DAYS = 90
 # Warehouse capacity (total units across all SKUs for a single store)
 # ~30,000 is tight enough to bind on peak weeks (holiday uplifts pushing demand
 # to ~27,000+) without causing infeasibility on normal weeks (~18,300 avg)
-WAREHOUSE_CAPACITY_PER_STORE = 30_000
+WAREHOUSE_CAPACITY_PER_STORE = 500_000  # scaled up for real Favorita data (~691 avg units × 49 items = ~34k/week)
 
 # Perishable waste cost multiplier: perishable overstock costs this many times
 # more than non-perishable overstock, because of short shelf life / disposal.

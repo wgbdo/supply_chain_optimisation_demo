@@ -335,7 +335,7 @@ def main():
         print(f"\n  Optimising Store {store_nbr} ({n_weeks} weeks, {len(store_data)} rows)...")
         result = optimise_single_store(store_data, store_nbr)
         all_results.append(result)
-        print(f"    → {len(result)} order decisions, total cost: ${result['order_cost'].sum():,.0f}")
+        print(f"    -> {len(result)} order decisions, total cost: ${result['order_cost'].sum():,.0f}")
 
     order_plan = pd.concat(all_results, ignore_index=True)
 
