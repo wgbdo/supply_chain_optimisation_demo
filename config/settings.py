@@ -24,9 +24,8 @@ RULES_PATH = PROJECT_ROOT / "business_rules" / "rules.json"
 DATA_SOURCE: str = "kaggle"  # "kaggle" | "synthetic"
 
 # Path to real Kaggle Favorita CSVs (only used when DATA_SOURCE = "kaggle")
-KAGGLE_DATA_PATH = Path(
-    r"C:\Users\Wilter.Grobler\OneDrive - BDO\Documents\Youfoodz\kaggle_data_files"
-)
+# Update this to the folder on your machine that contains train.csv etc.
+KAGGLE_DATA_PATH = Path(r"C:\path\to\your\kaggle_favorita_csvs")
 
 # Resolved raw data source — do not edit this line, change DATA_SOURCE above.
 if DATA_SOURCE == "kaggle":
