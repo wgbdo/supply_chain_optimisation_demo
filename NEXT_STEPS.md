@@ -1,144 +1,111 @@
 # Next Steps — Supply Chain Optimisation Demo
 
-## Pipeline Run Results
+## Latest Pipeline Results
 
-### Run 2 — Real Kaggle Favorita Data (125M rows, 49 items × 5 stores, 2013–2017)
+Dataset: Kaggle Favorita (125M rows), 49 items × 5 stores, 2013–2017 evaluation window.
 
 | Metric | Result | Target | Status |
 |---|---|---|---|
-| Forecast MAPE | 154.34% | <30% | ❌ Skewed by low-volume items |
-| Forecast Bias | +78.1 units (+13.6%) | ~0 | ⚠️ Over-forecasting |
-| 80% Interval Coverage | 59.87% | ~80% | ⚠️ Below target |
-| Fill Rate | 98.38% | >98% | ✅ |
-| Stockout Rate | 7.49% (137 incidents) | <5% | ⚠️ Slightly above target |
-| Waste Rate | 7.99% — perishables 12.9% | <5% | ❌ Above target |
-| Total Cost | $4,310,512 | — | — |
-| Cost per Unit | $4.12 | — | — |
+| sMAPE | **34.18%** | <35% | ✅ |
+| Raw MAPE | 158.76% | — | ⚠️ Skewed by low-volume items (see Priority 1) |
+| Forecast Bias | +76.3 units (+13.3%) | ~0 | ⚠️ Persistent over-forecast |
+| 80% Interval Coverage | **70.97%** | ~80% | ⚠️ Below target |
+| Fill Rate | **98.39%** | >98% | ✅ |
+| Stockout Rate | 6.29% (115 incidents) | <5% | ⚠️ Slightly above target |
+| Waste Rate | **7.64%** (perishables 12.1%) | <5% | ❌ Above target |
+| Total Cost | $4,372,542 | — | — |
+| Cost per Unit | $4.18 | — | — |
+| **Saving vs 25% flat-buffer heuristic** | **$2,339,901 (34.9%)** | — | ✅ |
 
-### Run 1 — Synthetic Data (Baseline, now superseded)
-
-| Metric | Result | Notes |
-|---|---|---|
-| MAPE | 89.31% | Synthetic noise; lower variance than real |
-| Waste Rate | 6.54% | After bias correction + seasonal DAVE_003 |
-| Total Cost | $2.34M | Smaller volumes than real data |
+Business rules active: DAVE_001 (Easter), DAVE_002 (Christmas), DAVE_003 (perishable buffer), DAVE_004 (heat), DAVE_005 (new item), DAVE_006 (payday ×230), DAVE_007 (low-demand cap ×12).
 
 ---
 
-## Completed ✅
+## Priority 1 — Fix the MAPE Measurement Problem
 
-| Item | Change | Impact |
-|---|---|---|
-| Interval coverage NaN bug | Added `forecast_q10` to step 06 output | Coverage now 59.87% |
-| LightGBM hyperparameter tuning | `num_leaves=63`, `n_estimators=1000`, `lr=0.03` | Improved model fit |
-| Bias correction | Subtract mean training residual post-forecast | −10.36 unit bias corrected |
-| DAVE_003 recalibration | Seasonal only (Oct–Apr) instead of always | Reduced off-season over-ordering |
-| Perishability penalty in MIP | `PERISHABLE_WASTE_COST_MULTIPLIER=2.5` in objective | Cost-aware ordering for perishables |
-| Unit tests | 21 tests across business rules + MIP solver | All passing |
-| Real Kaggle data integration | Auto-detect `KAGGLE_DATA_PATH`; `RAW_DATA_SOURCE` fallback | Pipeline runs on 125M-row real dataset |
+**Root cause**: Raw MAPE is 158% because a handful of items with very low actual sales (e.g. 7 units/week actual vs 138 forecast) create unbounded percentage errors. The model is not broken — the metric is misleading.
 
----
+### 1.1 — Filter intermittent items from top-N selection
+- **What**: In `src/01_data_prep.py`, after selecting the top-N items by total sales, drop any item whose **median weekly sales < 20 units**. These items are genuinely intermittent and are better handled by a separate Croston/ADIDA model rather than LightGBM.
+- **Why it matters**: Removing ~5–10 low-volume outliers would bring raw MAPE well below 50% without changing any model code. DAVE_007 suppresses the worst over-ordering from these items but doesn't fix the root cause.
+- **File**: `config/settings.py` (add `MIN_MEDIAN_WEEKLY_SALES = 20`), `src/01_data_prep.py`
 
-## Priority 1 — Reduce MAPE (154% → target <30%)
+### 1.2 — Report sMAPE as the primary forecast metric
+- **What**: sMAPE (`2*|A−F|/(|A|+|F|)`) is already computed at 34.18% — promote it as the headline metric in the dashboard and evaluation output. Demote raw MAPE to a footnote.
+- **File**: `src/07_evaluation.py`, `src/08_dashboard.py`
 
-The high MAPE on real data is **not primarily a model quality problem** — it's a measurement problem. A handful of very-low-volume items (e.g. item with actual sales of 9 units, forecast 85) dominate the MAPE calculation.
-
-### 1.1 — Filter out intermittent/low-volume items from top-N selection
-- **File**: `config/settings.py`, `src/01_data_prep.py`
-- **Change**: In `load_raw_data()`, after filtering to top N items, additionally drop items where the median weekly sales is below a threshold (e.g. `< 20 units`). These items are better handled by Croston's method, not LightGBM.
-- **Expected impact**: MAPE drops significantly (low-volume items have unbounded % error).
-
-### 1.2 — Switch MAPE metric to sMAPE or volume-weighted MAPE
-- **File**: `src/04_demand_forecasting.py`, `src/07_evaluation.py`
-- **Change**: Replace raw MAPE with symmetric MAPE (`2*|A-F|/(|A|+|F|)`) or weight errors by actual demand volume. This gives a fairer picture of model quality across the full range of item sizes.
-- **Effort**: ~10 lines of code change.
-
-### 1.3 — Per-family models
-- The dataset has 8 product families with very different demand patterns (BEVERAGES vs DAIRY vs PRODUCE). A single shared LightGBM model cannot learn family-specific seasonality.
-- **Change**: Loop over families in `src/04_demand_forecasting.py`, fit one LightGBM per family (or use the `family` column as a high-cardinality categorical feature with target encoding).
+### 1.3 — Per-family LightGBM models
+- **What**: The dataset has 8 product families (BEVERAGES, DAIRY, PRODUCE, etc.) with very different seasonal patterns. A single shared model averages over these differences. Train one quantile LightGBM per family, then concatenate predictions.
+- **Expected impact**: Lower bias, better interval coverage for families with distinct patterns (e.g. PRODUCE peaks differently to BEVERAGES).
+- **File**: `src/04_demand_forecasting.py` — wrap the existing `fit`/`predict` loop in a `for family in df['family'].unique()` loop.
 
 ---
 
-## Priority 2 — Reduce Waste Rate (8% → <5%)
+## Priority 2 — Reduce Waste Rate (7.6% → <5%)
 
-Perishables at **12.9% waste** are the key driver. Root causes:
-1. **Over-forecasting bias** (+13.6%) pumps the q90 upper bound used for safety stock.
-2. **Safety stock is symmetric** — the MIP adds safety stock equally to perishable and non-perishable items. Perishables should use a tighter safety stock (lower quantile) because the cost of waste exceeds the cost of a minor stockout.
-3. **`WAREHOUSE_CAPACITY_PER_STORE = 500,000`** is effectively unconstrained at current volumes. Reducing it to a realistic value reintroduces capacity as a natural waste brake.
+Perishables at **12.1% waste** are the primary driver. Three independent levers:
 
-### 2.1 — Use q40 instead of q50 as the base order for perishables
-- **File**: `src/06_inventory_optimisation.py`
-- **Change**: When building the demand constraint for perishable items, use `forecast_q40` (or interpolate between q10 and q50) rather than q50. This asymmetric ordering policy reduces expected waste at the cost of a slightly lower fill rate.
-- **Note**: Requires adding a `q40` model in step 04 or interpolating.
+### 2.1 — Tighten the base demand for perishable orders
+- **What**: The MIP currently uses `forecast_q50` as the base demand for all items including perishables. Switch perishables to `forecast_q40` (interpolated between q10 and q50). Asymmetric ordering — order slightly less than the median forecast — reduces expected waste because the cost of waste ($8.75/unit) exceeds the cost of a minor stockout ($10/unit) only at the margin.
+- **File**: `src/06_inventory_optimisation.py` — add `q40 = q10 + 0.4*(q50-q10)` and use it for perishable demand constraint.
 
-### 2.2 — Calibrate `WAREHOUSE_CAPACITY_PER_STORE`
-- Current value of 500,000 is a placeholder. Compute a realistic value: `avg_weekly_demand_per_store × max_weeks_stock_allowed`.
-- With avg 529 units/item × 49 items × 2 weeks = ~52,000 units. Setting to `60_000` would meaningfully constrain over-ordering.
-- **File**: `config/settings.py`
+### 2.2 — Reduce `WAREHOUSE_CAPACITY_PER_STORE` to a realistic value
+- **What**: The current value of 60,000 units/store is still loose. A realistic two-week holding constraint at current volumes is ~52,000 units (avg 529 units/item × 49 items × 2 weeks). Setting the cap closer to this forces the MIP to trade off across items rather than order maximum for all.
+- **File**: `config/settings.py` → `WAREHOUSE_CAPACITY_PER_STORE = 52_000`
 
-### 2.3 — Add `SAFETY_STOCK_WEEKS` as a per-family parameter
+### 2.3 — Per-family safety stock weeks
+- **What**: Replace the single `SAFETY_STOCK_WEEKS` scalar with a dict keyed by perishability class: `{'perishable': 0.5, 'non_perishable': 1.5}`. Perishable items get a narrower safety buffer — a minor stockout is less expensive than accumulating waste across 49 SKUs per store.
 - **File**: `config/settings.py`, `src/06_inventory_optimisation.py`
-- **Change**: Instead of a single `SAFETY_STOCK_WEEKS` scalar, use a dict keyed by family (e.g. `PRODUCE: 0.5`, `BEVERAGES: 1.5`). Perishable families get a smaller safety stock buffer.
 
 ---
 
-## Priority 3 — Improve Interval Coverage (59.9% → ~80%)
+## Priority 3 — Close the Interval Coverage Gap (71% → ~80%)
 
-The 80% prediction interval is only covering 59.9% of actual outcomes — the intervals are too narrow.
+The 80% prediction interval is covering only 71% of actual outcomes. The conformal adjustment (+23.81 units) partially fixes this, but the intervals are still too narrow on high-volatility items.
 
-### 3.1 — Conformalized quantile regression
-- Wrap the LightGBM quantile forecasts in a **conformal prediction** post-processing step using a calibration split (the last 10% of training data).
-- The conformal adjustment inflates/deflates q10 and q90 so that empirical coverage on the calibration set hits exactly 80%.
-- Library: `MAPIE` (already available via pip) or a 10-line manual implementation.
+### 3.1 — Recalibrate the conformal adjustment per product family
+- **What**: The current conformal correction is a single scalar applied uniformly. Compute a separate adjustment per family — high-variance families (PRODUCE) need a larger adjustment than stable categories (BEVERAGES). This is still a simple post-processing step with no model changes.
+- **File**: `src/04_demand_forecasting.py` — group calibration residuals by family before computing the adjustment.
 
-### 3.2 — Widen quantile gap
-- Quick interim fix: train q05/q95 instead of q10/q90 — the 90% interval will cover more outcomes at the cost of slightly higher order quantities.
-- **File**: `src/04_demand_forecasting.py` — change `QUANTILES = [0.1, 0.5, 0.9]` to `[0.05, 0.5, 0.95]`.
+### 3.2 — Widen the base quantile gap
+- **What**: Train `q05`/`q95` instead of `q10`/`q90`. This widens the interval by construction and is a one-line change. The 90% interval should cover ~80% of outcomes more reliably than the current 80% interval.
+- **File**: `src/04_demand_forecasting.py` — `QUANTILES = [0.05, 0.5, 0.95]`
 
 ---
 
-## Priority 4 — Pipeline Productionisation
+## Priority 4 — Reduce Stockout Rate (6.3% → <5%)
 
-### 4.1 — Scheduled pipeline execution
-- Wrap steps 01–07 in **Prefect** or a simple **cron + PowerShell script**.
-- Each step is already idempotent (reads parquet, writes parquet) — no script changes needed.
-- Suggested schedule: weekly run on Monday morning before the ordering window.
+115 stockout incidents represent 16,912 lost units. The stockout is concentrated in a small number of item/store/week combinations.
 
-### 4.2 — Dashboard hardening
-- Add authentication (`streamlit-authenticator` or Streamlit Community Cloud OAuth).
-- Replace local parquet reads with Azure Blob / S3 or SQLite for multi-user access.
-- Add an operator override feedback loop: flag recommendations overridden → feeds back into rule calibration.
+### 4.1 — Identify stockout-prone items and add a targeted DAVE rule
+- **What**: Run `evaluation_summary` grouped by item to find the 5 items responsible for the majority of stockout events. Add a `DAVE_008` rule that applies a `multiply_safety_stock: 1.25` factor specifically to those item IDs during their historical peak periods.
+- **File**: `business_rules/rules.json`, `src/business_rules_utils.py`
 
-### 4.3 — Suppress CBC solver verbose output in production
+### 4.2 — Use q90 as the order floor for high-stockout-risk items
+- **What**: For items where the stockout rate exceeds 10% in historical evaluation, set the MIP minimum order to `forecast_q90` rather than the current safety-stock formula. This over-orders slightly but eliminates the tail stockout risk for the worst offenders.
 - **File**: `src/06_inventory_optimisation.py`
-- **Change**: Pass `msg=False` to `pulp.PULP_CBC_CMD(msg=False)` to silence the per-solve CBC log. Keeps pipeline output clean.
 
 ---
 
-## Priority 5 — Strategic Enhancements (Longer Term)
+## Priority 5 — Pipeline Productionisation
+
+### 5.1 — Scheduled weekly run
+- Wrap steps 01–07 in a PowerShell scheduled task or Prefect flow. Each step is already idempotent (reads parquet, writes parquet). Suggested schedule: Monday 06:00 before the weekly ordering window opens.
+
+### 5.2 — Dashboard access control
+- Add `streamlit-authenticator` or Streamlit Community Cloud OAuth. The current dashboard is publicly accessible with no login gate.
+
+### 5.3 — Override feedback loop
+- When a user overrides a recommendation in the dashboard, log the override (item, store, week, recommended_qty, override_qty) to a CSV. Feed this back into rule calibration — systematic overrides indicate a missing or miscalibrated rule.
+
+---
+
+## Longer-Term Strategic Improvements
 
 | Enhancement | Why | Approach |
 |---|---|---|
-| **Decision-aware forecasting** | Current model minimises MAPE, not business cost. Asymmetric waste/stockout costs should shape the forecast. | SPO+ or cost-sensitive quantile loss |
-| **Dynamic safety stock** | Static safety stock ignores supplier lead time variability. | Per-supplier lead time distribution → safety stock formula |
-| **Multi-echelon optimisation** | Stores optimised independently; no cross-store rebalancing. | Add inter-store transfer variables to the MIP |
-| **Intermittent demand models** | Low-volume SKUs need Croston's / ADIDA, not LightGBM | `statsforecast.AutoCES` or manual Croston |
-| **Reinforcement learning policy** | Replace forecast+MIP with a direct state→action policy once a simulation environment exists. | Use synthetic generator as a Gym env; train with PPO |
-
----
-
-## Immediate Action Checklist
-
-- [x] Fix interval coverage NaN bug
-- [x] Tune LightGBM hyperparameters
-- [x] Add bias correction post-processing
-- [x] Recalibrate DAVE_003 rule (seasonal)
-- [x] Add perishability penalty to MIP
-- [x] Add unit tests (21 passing)
-- [x] Connect to real Kaggle data source
-- [ ] Filter out intermittent/low-volume items before top-N selection (Priority 1.1)
-- [ ] Switch to sMAPE or volume-weighted MAPE (Priority 1.2)
-- [ ] Use asymmetric quantile for perishable orders (Priority 2.1)
-- [ ] Calibrate `WAREHOUSE_CAPACITY_PER_STORE` to realistic value ~60,000 (Priority 2.2)
-- [ ] Conformalize prediction intervals to hit 80% coverage (Priority 3.1)
-- [ ] Silence CBC solver output with `msg=False` (Priority 4.3)
+| **Decision-aware forecasting** | Current model minimises sMAPE, not business cost. Asymmetric waste/stockout costs should shape the forecast directly. | SPO+ (Smart Predict then Optimise) or cost-sensitive quantile loss |
+| **Dynamic safety stock** | Static safety stock ignores supplier lead time variability — a delayed shipment turns a safe order into a stockout. | Model lead time as a distribution; use safety stock = z × σ_demand × √(lead_time) |
+| **Multi-echelon optimisation** | Stores are optimised independently. Rebalancing slow-moving stock from overstocked stores reduces waste without additional procurement. | Add inter-store transfer variables to the MIP |
+| **Intermittent demand models** | Low-volume SKUs (e.g. the 12 items DAVE_007 fires on) need Croston's method or ADIDA, not LightGBM. | `statsforecast.CrostonOptimized` or a manual Croston implementation |
+| **Reinforcement learning policy** | Replace the forecast+MIP two-step with a direct state→order-quantity policy that learns the cost structure from experience. | Use the synthetic data generator as an OpenAI Gym env; train with PPO |

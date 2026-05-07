@@ -91,13 +91,13 @@
     "sku_pattern": "*",
     "condition": {
       "type": "low_rolling_demand",
-      "rolling_column": "rolling_4w_mean",
-      "threshold": 5.0
+      "rolling_column": "demand_lag_1",
+      "threshold": 10.0
     },
     "action": {
       "type": "cap_forecast",
-      "cap_multiplier": 1.0
+      "cap_multiplier": 1.5
     },
-    "rationale": "Items with a 4-week rolling average demand below 5 units/week are intermittent sellers. The ML model tends to over-forecast these because it learned average patterns. Cap the adjusted forecast at the rolling average to prevent large orders for slow-moving items."
+    "rationale": "Items where last week's actual sales were below 10 units are likely intermittent or in steep demand decline. The ML model lags reality in these cases — its 4-week rolling features still reflect historical high demand. Cap the forecast at 1.5× last week's actuals to prevent large over-orders for slow-moving items (e.g. item selling 7 units/week gets a max forecast of ~10, not 138)."
   }
 ]
