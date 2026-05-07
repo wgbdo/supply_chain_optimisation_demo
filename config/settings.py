@@ -24,18 +24,14 @@ RULES_PATH = PROJECT_ROOT / "business_rules" / "rules.json"
 DATA_SOURCE: str = "kaggle"  # "kaggle" | "synthetic"
 
 # Path to real Kaggle Favorita CSVs (only used when DATA_SOURCE = "kaggle")
-# Update this to the folder on your machine that contains train.csv etc.
-KAGGLE_DATA_PATH = Path(r"C:\path\to\your\kaggle_favorita_csvs")
+# The kaggle_data_files/ folder ships with the repo — no separate download needed.
+KAGGLE_DATA_PATH = PROJECT_ROOT / "kaggle_data_files"
 
 # Resolved raw data source — do not edit this line, change DATA_SOURCE above.
 if DATA_SOURCE == "kaggle":
-    if not (KAGGLE_DATA_PATH / "train.csv").exists():
-        raise FileNotFoundError(
-            f"DATA_SOURCE is 'kaggle' but train.csv was not found in:\n"
-            f"  {KAGGLE_DATA_PATH}\n"
-            f"Either download the Kaggle data there, or set DATA_SOURCE = 'synthetic' "
-            f"in config/settings.py."
-        )
+    # Validation is deferred to step 01_data_prep.py which actually reads the
+    # raw files. Later pipeline steps (07, 08) import settings without needing
+    # raw data, so we must not raise here unconditionally.
     RAW_DATA_SOURCE = KAGGLE_DATA_PATH
 else:
     RAW_DATA_SOURCE = DATA_RAW

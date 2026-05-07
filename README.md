@@ -33,16 +33,17 @@ DATA_SOURCE = "synthetic"
 
 ### Option B — Real Kaggle Favorita data (125M rows, richer signal)
 
-Download from https://www.kaggle.com/competitions/favorita-grocery-sales-forecasting/data  
-Extract: `train.csv`, `stores.csv`, `items.csv`, `holidays_events.csv` into a local folder.
+The Kaggle Corporación Favorita CSVs are included in the `kaggle_data_files/` folder
+inside the project — no separate download required. The pipeline is already configured
+to use them:
 
 In `config/settings.py`:
 ```python
 DATA_SOURCE = "kaggle"
-KAGGLE_DATA_PATH = Path(r"C:\path\to\your\kaggle_csvs")
+KAGGLE_DATA_PATH = BASE_DIR / "kaggle_data_files"  # already set — do not change
 ```
 
-The pipeline auto-validates that `train.csv` exists and raises a clear error if not.
+The pipeline validates that `train.csv` exists and raises a clear error if not.
 
 > **Results with Kaggle data:** fill_rate=98.4%, waste_rate=4.5%, sMAPE=34.2%, total_cost=$3.94M
 
@@ -97,14 +98,8 @@ pip install -r requirements.txt
 Edit `config/settings.py` and set `DATA_SOURCE`:
 
 ```python
-DATA_SOURCE = "synthetic"   # no download needed — use this to get started
-# DATA_SOURCE = "kaggle"    # real data — set KAGGLE_DATA_PATH too
-```
-
-If using synthetic data, generate it first:
-
-```bash
-python src/00_generate_synthetic_data.py
+DATA_SOURCE = "kaggle"      # Kaggle data in kaggle_data_files/ — already set
+# DATA_SOURCE = "synthetic"  # fallback: no CSVs needed, generates data on the fly
 ```
 
 ### 3. Run the full pipeline
@@ -284,10 +279,10 @@ prices, and store metadata. No Kaggle account or download is required.
 The generator uses a fixed random seed (`numpy.random.default_rng(42)`) so results
 are fully reproducible.
 
-> **Note:** If you want to run the pipeline on the real Corporación Favorita dataset,
-> download it from https://www.kaggle.com/competitions/favorita-grocery-sales-forecasting/data,
-> extract the CSVs into `data/raw/`, and skip step 0. The pipeline is compatible with
-> both datasets.
+> **Note:** The real Corporación Favorita dataset (125M rows) is included in
+> `kaggle_data_files/`. The pipeline uses it by default (`DATA_SOURCE = "kaggle"`).
+> Switch to `DATA_SOURCE = "synthetic"` in `config/settings.py` if you want a
+> fast reproducible demo without loading the full dataset.
 
 ---
 
@@ -299,10 +294,11 @@ supply_chain_optimisation/
 ├── requirements.txt                       ← Python dependencies
 ├── config/
 │   └── settings.py                        ← central configuration
+├── kaggle_data_files/                     ← Kaggle Favorita CSVs (train.csv etc.)
 ├── data/
-│   ├── raw/                               ← put Kaggle CSVs here (or run synthetic generator)
+│   ├── raw/                               ← synthetic data output (auto-created)
 │   ├── processed/                         ← intermediate outputs (auto-created)
-│   └── README.md                          ← download instructions
+│   └── README.md                          ← data notes
 ├── business_rules/
 │   └── rules.json                         ← Dave's expert rules (SME knowledge)
 ├── src/

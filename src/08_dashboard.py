@@ -47,12 +47,13 @@ def load_data():
     order_plan = pd.read_parquet(DATA_PROCESSED / "evaluation_report.parquet")
     summary = pd.read_csv(DATA_PROCESSED / "evaluation_summary.csv")
     items = pd.read_parquet(DATA_PROCESSED / "items.parquet")
-    return order_plan, summary, items
+    baseline = pd.read_parquet(DATA_PROCESSED / "baseline_report.parquet")
+    return order_plan, summary, items, baseline
 
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 try:
-    order_plan, summary, items = load_data()
+    order_plan, summary, items, baseline = load_data()
 except FileNotFoundError:
     st.error(
         "Pipeline outputs not found. Please run all steps (01–07) before launching the dashboard.\n\n"
@@ -96,6 +97,17 @@ if selected_family != "All":
 
 if show_rules_only:
     filtered = filtered[filtered["rules_applied"] != ""]
+
+# Item selector for detail view — depends on the other filters above so it
+# must be placed after `filtered` is finalised. Streamlit still renders it
+# in the sidebar regardless of where in the script it is called.
+_item_options = ["All"] + sorted(filtered["item_nbr"].unique().tolist())
+selected_item = st.sidebar.selectbox(
+    "Item (Detail View)",
+    _item_options,
+    index=0,
+    help="Select a specific item to populate the Item-Level Detail section at the bottom of the page.",
+)
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.title("🥦 FreshBox Replenishment Dashboard")
@@ -144,9 +156,28 @@ else:
         "order_qty",
         "order_cost",
         "actual_demand",
+        "fulfilled",
         "rules_applied",
     ]
     display = filtered[display_cols].copy()
+
+    # Per-item fill rate: fulfilled / actual_demand, capped at 100%
+    # Shows as a percentage with a traffic-light emoji so problem items stand out.
+    def fmt_fill(row):
+        if row["actual_demand"] <= 0:
+            return "N/A"
+        pct = min(row["fulfilled"] / row["actual_demand"] * 100, 100)
+        if pct >= 98:
+            icon = "🟢"
+        elif pct >= 90:
+            icon = "🟡"
+        else:
+            icon = "🔴"
+        return f"{icon} {pct:.1f}%"
+
+    display["fill_rate"] = display.apply(fmt_fill, axis=1)
+    display = display.drop(columns=["fulfilled"])
+
     display["perishable"] = display["perishable"].map({0: "No", 1: "Yes"})
     display.columns = [
         "Item",
@@ -160,7 +191,17 @@ else:
         "Order Cost ($)",
         "Actual Demand",
         "Rules Applied",
+        "Fill Rate",
     ]
+
+    # Reorder so Fill Rate is visible early
+    col_order = [
+        "Item", "Family", "Perishable", "Fill Rate",
+        "On Hand", "Forecast (Median)", "Forecast (High)",
+        "Safety Stock", "Order Qty", "Order Cost ($)",
+        "Actual Demand", "Rules Applied",
+    ]
+    display = display[col_order]
 
     st.dataframe(
         display.sort_values("Order Cost ($)", ascending=False),
@@ -168,90 +209,7 @@ else:
         hide_index=True,
         height=400,
     )
-
-st.divider()
-
-# ── Item Detail View ───────────────────────────────────────────────────────────
-st.subheader("🔍 Item Detail")
-
-if len(filtered) > 0:
-    selected_item = st.selectbox(
-        "Select an item for detailed view",
-        sorted(filtered["item_nbr"].unique()),
-    )
-
-    item_row = filtered[filtered["item_nbr"] == selected_item].iloc[0]
-
-    detail_col1, detail_col2 = st.columns(2)
-
-    with detail_col1:
-        st.markdown("**Inventory Position**")
-        st.metric("On Hand", f"{item_row['on_hand']:,.0f} units")
-        st.metric("Forecast (Median)", f"{item_row['adjusted_q50']:,.0f} units")
-        st.metric("Forecast (High)", f"{item_row['adjusted_q90']:,.0f} units")
-        st.metric("Safety Stock", f"{item_row['safety_stock']:,.0f} units")
-        st.metric("Recommended Order", f"{item_row['order_qty']:,.0f} units")
-
-    with detail_col2:
-        st.markdown("**Explanation**")
-        explanation = item_row.get("explanations", "No rules applied — using base ML forecast.")
-        st.info(explanation)
-
-        # Generate a natural-language summary
-        gap = item_row["adjusted_q50"] + item_row["safety_stock"] - item_row["on_hand"]
-        st.markdown(
-            f"**Why this quantity?** The model forecasts median demand of "
-            f"**{item_row['adjusted_q50']:,.0f}** units (high scenario: "
-            f"{item_row['adjusted_q90']:,.0f}). With **{item_row['on_hand']:,.0f}** "
-            f"units on hand and a safety buffer of **{item_row['safety_stock']:,.0f}**, "
-            f"the gap is ~**{max(0, gap):,.0f}** units. "
-            f"Order cost: **${item_row['order_cost']:,.0f}**."
-        )
-
-    # Historical demand chart for this item
-    st.markdown("**Demand History — This Item at This Store**")
-    item_history = order_plan[
-        (order_plan["item_nbr"] == selected_item)
-        & (order_plan["store_nbr"] == selected_store)
-    ].sort_values("week_start")
-
-    if len(item_history) > 1:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=item_history["week_start"],
-            y=item_history["actual_demand"],
-            name="Actual Demand",
-            mode="lines+markers",
-            line=dict(color="black"),
-        ))
-        fig.add_trace(go.Scatter(
-            x=item_history["week_start"],
-            y=item_history["adjusted_q50"],
-            name="Forecast (Median)",
-            mode="lines",
-            line=dict(color="blue", dash="dash"),
-        ))
-        fig.add_trace(go.Scatter(
-            x=item_history["week_start"],
-            y=item_history["forecast_q90"],
-            name="Forecast (High)",
-            mode="lines",
-            line=dict(color="lightblue", dash="dot"),
-            fill="tonexty",
-            fillcolor="rgba(100, 149, 237, 0.15)",
-        ))
-        fig.add_trace(go.Bar(
-            x=item_history["week_start"],
-            y=item_history["order_qty"],
-            name="Order Qty",
-            marker_color="rgba(70, 130, 180, 0.3)",
-        ))
-        fig.update_layout(
-            height=350,
-            margin=dict(l=0, r=0, t=30, b=0),
-            legend=dict(orientation="h", y=-0.15),
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    st.caption("🟢 ≥ 98% fill rate | 🟡 90–97% | 🔴 < 90% (stockout risk)")
 
 st.divider()
 
@@ -326,6 +284,135 @@ if len(store_data) > 0 and "fulfilled" in store_data.columns:
 
 st.divider()
 
+# ── Before vs After: Optimised vs Heuristic Baseline ──────────────────────────
+# Compares the MIP-optimised plan against a manual 25%-buffer heuristic —
+# the kind of rule-of-thumb an Excel-based buyer would use without this system.
+st.subheader("💰 Value of Optimisation: Before vs After")
+st.caption(
+    "**Before** = manual heuristic (order = forecast × 1.25, rounded to nearest 50 units, "
+    "no perishable distinction, no capacity constraint). "
+    "**After** = this system (ML forecast + business rules + MIP optimiser)."
+)
+
+_base_store = baseline[baseline["store_nbr"] == selected_store].copy()
+_opt_store = order_plan[order_plan["store_nbr"] == selected_store].copy()
+
+if len(_base_store) > 0 and len(_opt_store) > 0:
+    # ── KPI delta row ──────────────────────────────────────────────────────────
+    def _metrics(df):
+        dem = df["actual_demand"].sum()
+        ord_ = df["order_qty"].sum()
+        ful = df["fulfilled"].sum()
+        waste = df["waste_units"].sum()
+        stockout = df["stockout_units"].sum()
+        proc = df["order_cost"].sum()
+        waste_cost = waste * 3.50
+        so_cost = stockout * 10.00
+        return {
+            "fill_rate": ful / dem * 100 if dem > 0 else 0,
+            "waste_rate": waste / ord_ * 100 if ord_ > 0 else 0,
+            "stockout_rate": df["is_stockout"].mean() * 100,
+            "procurement": proc,
+            "waste_cost": waste_cost,
+            "stockout_cost": so_cost,
+            "total_cost": proc + waste_cost + so_cost,
+        }
+
+    bm = _metrics(_base_store)
+    om = _metrics(_opt_store)
+
+    bva_c1, bva_c2, bva_c3, bva_c4 = st.columns(4)
+    bva_c1.metric(
+        "Total Supply Chain Cost",
+        f"${om['total_cost']:,.0f}",
+        delta=f"-${bm['total_cost'] - om['total_cost']:,.0f} saved",
+        delta_color="normal",
+        help="Procurement + estimated waste cost + estimated stockout cost",
+    )
+    bva_c2.metric(
+        "Fill Rate",
+        f"{om['fill_rate']:.1f}%",
+        delta=f"+{om['fill_rate'] - bm['fill_rate']:.1f}pp vs heuristic",
+        delta_color="normal",
+    )
+    bva_c3.metric(
+        "Waste Rate",
+        f"{om['waste_rate']:.1f}%",
+        delta=f"{om['waste_rate'] - bm['waste_rate']:.1f}pp vs heuristic",
+        delta_color="inverse",
+        help="Lower is better — inverse colouring applied",
+    )
+    bva_c4.metric(
+        "Stockout Rate",
+        f"{om['stockout_rate']:.1f}%",
+        delta=f"{om['stockout_rate'] - bm['stockout_rate']:.1f}pp vs heuristic",
+        delta_color="inverse",
+    )
+
+    # ── Side-by-side cost breakdown bar chart ──────────────────────────────────
+    cost_compare = pd.DataFrame([
+        {"Scenario": "Heuristic (Before)", "Procurement": bm["procurement"],
+         "Waste Cost": bm["waste_cost"], "Stockout Cost": bm["stockout_cost"]},
+        {"Scenario": "Optimised (After)", "Procurement": om["procurement"],
+         "Waste Cost": om["waste_cost"], "Stockout Cost": om["stockout_cost"]},
+    ])
+    fig_bva = px.bar(
+        cost_compare,
+        x="Scenario",
+        y=["Procurement", "Waste Cost", "Stockout Cost"],
+        title="Total Supply Chain Cost: Heuristic vs Optimised",
+        labels={"value": "Cost ($)", "variable": "Cost Type"},
+        color_discrete_map={
+            "Procurement": "steelblue",
+            "Waste Cost": "coral",
+            "Stockout Cost": "gold",
+        },
+        text_auto=".2s",
+        barmode="stack",
+    )
+    saving = bm["total_cost"] - om["total_cost"]
+    saving_pct = saving / bm["total_cost"] * 100 if bm["total_cost"] > 0 else 0
+    fig_bva.add_annotation(
+        text=f"💡 ${saving:,.0f} saved ({saving_pct:.1f}%)",
+        xref="paper", yref="paper",
+        x=0.5, y=1.08, showarrow=False,
+        font=dict(size=14, color="green"),
+    )
+    fig_bva.update_layout(height=380, margin=dict(l=0, r=0, t=60, b=0))
+    st.plotly_chart(fig_bva, use_container_width=True)
+
+    # ── Weekly savings line chart ──────────────────────────────────────────────
+    def _weekly_cost(df, label):
+        g = df.groupby("week_start").agg(
+            procurement=("order_cost", "sum"),
+            waste_cost=("waste_units", lambda x: x.sum() * 3.50),
+            stockout_cost=("stockout_units", lambda x: x.sum() * 10.00),
+        ).reset_index()
+        g["total_cost"] = g["procurement"] + g["waste_cost"] + g["stockout_cost"]
+        g["Scenario"] = label
+        return g
+
+    weekly_bva = pd.concat([
+        _weekly_cost(_base_store, "Heuristic (Before)"),
+        _weekly_cost(_opt_store, "Optimised (After)"),
+    ])
+    fig_weekly_bva = px.line(
+        weekly_bva,
+        x="week_start",
+        y="total_cost",
+        color="Scenario",
+        title="Weekly Total Cost: Heuristic vs Optimised",
+        labels={"total_cost": "Total Cost ($)", "week_start": "Week"},
+        color_discrete_map={
+            "Heuristic (Before)": "coral",
+            "Optimised (After)": "steelblue",
+        },
+    )
+    fig_weekly_bva.update_layout(height=300, margin=dict(l=0, r=0, t=40, b=0))
+    st.plotly_chart(fig_weekly_bva, use_container_width=True)
+
+st.divider()
+
 # ── Manual Override Section ────────────────────────────────────────────────────
 st.subheader("✏️ Manual Override")
 st.markdown(
@@ -368,6 +455,136 @@ if st.button("Submit Override", type="primary"):
         # In production: write to a database table for model retraining feedback loop
     else:
         st.warning("Please provide a reason for the override.")
+
+# ── Item-Level Detail ──────────────────────────────────────────────────────────
+# Clearly separated from the aggregate sections above. Only populated when a
+# specific item is chosen via the sidebar; shows 'All' placeholder otherwise.
+st.divider()
+st.markdown(
+    "<div style='background:#eef2ff;padding:10px 16px;border-radius:6px;"
+    "border-left:4px solid #4a7fe5;margin-bottom:4px'>"
+    "<strong>🔬 Item-Level Detail</strong>&nbsp;&nbsp;"
+    "<span style='font-weight:normal;color:#555'>— metrics and chart below relate to a "
+    "single SKU, not the store aggregate above.</span></div>",
+    unsafe_allow_html=True,
+)
+
+if selected_item == "All" or len(filtered) == 0:
+    st.info(
+        "Select a specific item from the **Item (Detail View)** filter in the sidebar "
+        "to populate this section."
+    )
+else:
+    item_row = filtered[filtered["item_nbr"] == selected_item].iloc[0]
+
+    detail_col1, detail_col2 = st.columns(2)
+
+    with detail_col1:
+        st.markdown("**Inventory Position**")
+        st.metric("On Hand", f"{item_row['on_hand']:,.0f} units")
+        st.metric("Forecast (Median)", f"{item_row['adjusted_q50']:,.0f} units")
+        st.metric("Forecast (High)", f"{item_row['adjusted_q90']:,.0f} units")
+        st.metric("Safety Stock", f"{item_row['safety_stock']:,.0f} units")
+        st.metric("Recommended Order", f"{item_row['order_qty']:,.0f} units")
+
+    with detail_col2:
+        st.markdown("**Explanation**")
+        explanation = item_row.get("explanations", "No rules applied — using base ML forecast.")
+        st.info(explanation)
+
+        gap = item_row["adjusted_q50"] + item_row["safety_stock"] - item_row["on_hand"]
+        st.markdown(
+            f"**Why this quantity?** The model forecasts median demand of "
+            f"**{item_row['adjusted_q50']:,.0f}** units (high scenario: "
+            f"{item_row['adjusted_q90']:,.0f}). With **{item_row['on_hand']:,.0f}** "
+            f"units on hand and a safety buffer of **{item_row['safety_stock']:,.0f}**, "
+            f"the gap is ~**{max(0, gap):,.0f}** units. "
+            f"Order cost: **${item_row['order_cost']:,.0f}**."
+        )
+
+    st.markdown("**Demand History — This Item at This Store**")
+    item_history = order_plan[
+        (order_plan["item_nbr"] == selected_item)
+        & (order_plan["store_nbr"] == selected_store)
+    ].sort_values("week_start")
+
+    if len(item_history) > 1:
+        fig = go.Figure()
+
+        # Uncertainty band: q90 upper boundary drawn first, q10 fills back to it
+        fig.add_trace(go.Scatter(
+            x=item_history["week_start"],
+            y=item_history["forecast_q90"],
+            name="Forecast (High)",
+            mode="lines",
+            line=dict(color="lightblue", dash="dot"),
+            showlegend=True,
+        ))
+        fig.add_trace(go.Scatter(
+            x=item_history["week_start"],
+            y=item_history["forecast_q10"],
+            name="Forecast band (q10–q90)",
+            mode="lines",
+            line=dict(color="lightblue", dash="dot", width=0),
+            fill="tonexty",
+            fillcolor="rgba(100, 149, 237, 0.15)",
+            showlegend=False,
+        ))
+        fig.add_trace(go.Bar(
+            x=item_history["week_start"],
+            y=item_history["order_qty"],
+            name="Order Qty",
+            marker_color="rgba(70, 130, 180, 0.3)",
+        ))
+        fig.add_trace(go.Scatter(
+            x=item_history["week_start"],
+            y=item_history["adjusted_q50"],
+            name="Forecast (Median)",
+            mode="lines",
+            line=dict(color="blue", dash="dash"),
+        ))
+        fig.add_trace(go.Scatter(
+            x=item_history["week_start"],
+            y=item_history["actual_demand"],
+            name="Actual Demand",
+            mode="lines+markers",
+            line=dict(color="black"),
+        ))
+        if "on_hand" in item_history.columns:
+            fig.add_trace(go.Scatter(
+                x=item_history["week_start"],
+                y=item_history["on_hand"],
+                name="On Hand (start of week)",
+                mode="lines+markers",
+                line=dict(color="green", dash="dot", width=2),
+                marker=dict(symbol="diamond", size=6),
+            ))
+        if "available" in item_history.columns:
+            fig.add_trace(go.Scatter(
+                x=item_history["week_start"],
+                y=item_history["available"],
+                name="Available Stock (on hand + order)",
+                mode="lines+markers",
+                line=dict(color="darkorange", width=2),
+                marker=dict(symbol="circle-open", size=6),
+            ))
+
+        fig.update_layout(
+            height=400,
+            margin=dict(l=0, r=0, t=30, b=0),
+            legend=dict(orientation="h", y=-0.25),
+            yaxis_title="Units",
+            barmode="overlay",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            "**Bars** = recommended order qty (MIP optimiser) | "
+            "**Black line** = actual demand | "
+            "**Orange line** = available stock after order (on hand + order qty) | "
+            "**Green dotted** = inventory on hand at start of week (before order) | "
+            "**Dashed blue** = forecast median | "
+            "**Shaded band** = q10–q90 uncertainty"
+        )
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.divider()

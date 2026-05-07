@@ -22,7 +22,16 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config.settings import AGG_FREQ, DATA_PROCESSED, MIN_MEDIAN_WEEKLY_DEMAND, N_ITEMS, N_STORES, RAW_DATA_SOURCE
+from config.settings import AGG_FREQ, DATA_PROCESSED, DATA_SOURCE, KAGGLE_DATA_PATH, MIN_MEDIAN_WEEKLY_DEMAND, N_ITEMS, N_STORES, RAW_DATA_SOURCE
+
+# Validate Kaggle path early — only step 01 reads raw files so the check lives here.
+if DATA_SOURCE == "kaggle" and not (KAGGLE_DATA_PATH / "train.csv").exists():
+    raise FileNotFoundError(
+        f"DATA_SOURCE is 'kaggle' but train.csv was not found in:\n"
+        f"  {KAGGLE_DATA_PATH}\n"
+        f"Either download the Kaggle data there, or set DATA_SOURCE = 'synthetic' "
+        f"in config/settings.py."
+    )
 
 
 def load_raw_data() -> dict[str, pd.DataFrame]:

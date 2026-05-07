@@ -160,6 +160,71 @@ def compute_financial_metrics(plan: pd.DataFrame) -> dict:
     }
 
 
+def compute_heuristic_baseline(plan: pd.DataFrame) -> pd.DataFrame:
+    """
+    Simulate a manual heuristic replenishment baseline to compare against
+    the MIP-optimised plan.
+
+    CONCEPT — Why a heuristic baseline?
+      Real-world replenishment teams without an optimisation system typically
+      use a rule-of-thumb: order enough to cover forecast demand plus a flat
+      percentage safety buffer, rounded to the nearest pallet/case-pack.
+      This is what an Excel-based buyer would do.
+
+      We use: order_qty_heuristic = round(forecast_q50 * 1.25 / 50) * 50
+        - 25% flat safety buffer (industry rule-of-thumb for food retail)
+        - Rounded to nearest 50-unit case-pack
+        - No perishable distinction, no capacity constraint, no MIP rules
+
+      Comparing our optimised plan against this shows the £/$ value created
+      by the ML forecast + business rules + MIP optimiser.
+    """
+    b = plan[["store_nbr", "item_nbr", "week_start", "family", "perishable",
+              "on_hand", "forecast_q50", "actual_demand"]].copy()
+
+    # Heuristic: forecast × 1.25, rounded to nearest 50 units, capped at 2× demand
+    b["order_qty"] = (b["forecast_q50"] * 1.25 / 50).round() * 50
+    b["order_qty"] = b["order_qty"].clip(lower=0).astype(int)
+    b["order_cost"] = b["order_qty"] * AVG_PROCUREMENT_COST
+
+    # Simulate outcomes with same approach as compute_inventory_metrics
+    b["available"] = b["order_qty"] + b["on_hand"]
+    b["fulfilled"] = b[["available", "actual_demand"]].min(axis=1)
+    b["is_stockout"] = (b["actual_demand"] > b["available"]).astype(int)
+    b["stockout_units"] = (b["actual_demand"] - b["available"]).clip(lower=0)
+    b["overstock_units"] = (b["available"] - b["actual_demand"]).clip(lower=0)
+    b["waste_units"] = b.apply(
+        lambda r: r["overstock_units"] * (0.40 if r["perishable"] == 1 else 0.10),
+        axis=1,
+    )
+
+    return b
+
+
+def compute_baseline_metrics(baseline: pd.DataFrame) -> dict:
+    """Return the same metric keys as the optimised plan for direct comparison."""
+    total_demand = baseline["actual_demand"].sum()
+    total_ordered = baseline["order_qty"].sum()
+    total_fulfilled = baseline["fulfilled"].sum()
+    total_waste = baseline["waste_units"].sum()
+    total_stockout = baseline["stockout_units"].sum()
+
+    procurement = baseline["order_cost"].sum()
+    waste_cost = total_waste * WASTE_COST_PER_UNIT
+    stockout_cost = total_stockout * STOCKOUT_COST_PER_UNIT
+    total_cost = procurement + waste_cost + stockout_cost
+
+    return {
+        "Fill Rate (%)": round(total_fulfilled / total_demand * 100, 2) if total_demand > 0 else 0,
+        "Waste Rate (%)": round(total_waste / total_ordered * 100, 2) if total_ordered > 0 else 0,
+        "Stockout Rate (%)": round(baseline["is_stockout"].mean() * 100, 2),
+        "Total Procurement Cost ($)": round(procurement, 2),
+        "Total Waste Cost ($)": round(waste_cost, 2),
+        "Total Stockout Cost ($)": round(stockout_cost, 2),
+        "Total Cost ($)": round(total_cost, 2),
+    }
+
+
 def compute_perishable_breakdown(plan: pd.DataFrame) -> None:
     """Print metrics split by perishable vs non-perishable."""
     for label, mask in [("Perishable", plan["perishable"] == 1), ("Non-Perishable", plan["perishable"] == 0)]:
@@ -271,11 +336,29 @@ def main():
     plot_forecast_vs_actual(plan)
     plot_cost_breakdown(financial_metrics)
 
+    # ── Heuristic Baseline (for Before vs After comparison) ───────────
+    print("\n── Heuristic Baseline (25% flat safety buffer, no MIP) ──")
+    baseline = compute_heuristic_baseline(plan)
+    baseline_metrics = compute_baseline_metrics(baseline)
+    for name, val in baseline_metrics.items():
+        print(f"  {name:35s}: {val}")
+
+    opt_cost = financial_metrics["Total Cost ($)"]
+    base_cost = baseline_metrics["Total Cost ($)"]
+    saving = base_cost - opt_cost
+    saving_pct = saving / base_cost * 100 if base_cost > 0 else 0
+    print(f"\n  Cost saving vs heuristic: ${saving:,.0f} ({saving_pct:.1f}%)")
+
     # ── Save full evaluation results ───────────────────────────────────
     plan.to_parquet(DATA_PROCESSED / "evaluation_report.parquet", index=False)
 
-    # Also save a summary as CSV for easy viewing
-    summary = {**forecast_metrics, **inventory_metrics, **financial_metrics}
+    # Save heuristic baseline (row-level) for the dashboard comparison chart
+    baseline.to_parquet(DATA_PROCESSED / "baseline_report.parquet", index=False)
+
+    # Save comparison summary as CSV for easy viewing
+    optimised_row = {f"opt_{k}": v for k, v in {**forecast_metrics, **inventory_metrics, **financial_metrics}.items()}
+    baseline_row = {f"base_{k}": v for k, v in baseline_metrics.items()}
+    summary = {**optimised_row, **baseline_row}
     summary_df = pd.DataFrame([summary])
     summary_path = DATA_PROCESSED / "evaluation_summary.csv"
     summary_df.to_csv(summary_path, index=False)
