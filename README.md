@@ -184,16 +184,24 @@ Streamlit apps can be hosted for free in several ways:
 
 #### 1. Streamlit Community Cloud (recommended — easiest)
 
-- Push your repo to GitHub (already done: `https://github.com/wgbdo/supply_chain_optimisation_demo`)
-- Go to https://share.streamlit.io → "New app" → connect your GitHub repo
-- Set **Main file path** to `src/08_dashboard.py`
-- Set **Python version** to 3.12
-- Click Deploy — it's live at `https://yourname-yourapp.streamlit.app` within ~2 minutes
+The processed pipeline outputs are already committed to this repo (`data/processed/`),
+so Streamlit Cloud can serve the dashboard with no additional setup.
 
-**Limitation:** The app cannot access your local Kaggle CSVs. You would need to either:
-  - Commit pre-processed output parquet files (`data/processed/*.parquet`) to the repo, **or**
-  - Generate synthetic data in the cloud (run step 0 before the dashboard loads), **or**
-  - Upload the processed parquets to a GitHub Release and download them at startup
+**Steps:**
+
+1. Go to **https://share.streamlit.io** and sign in with your GitHub account
+2. Click **"New app"**
+3. Fill in:
+   - **Repository:** `wgbdo/supply_chain_optimisation_demo`
+   - **Branch:** `main`
+   - **Main file path:** `src/08_dashboard.py`
+4. Click **"Deploy"** — dependencies install automatically from `requirements.txt`
+5. App is live at `https://your-app-name.streamlit.app` within ~2 minutes
+
+**Access control (public vs private):**
+- After deployment, go to **Settings → Sharing**
+- Set to **Private** and add specific email addresses to restrict access — useful for client demos
+- The free tier supports private apps at no cost
 
 #### 2. Hugging Face Spaces (free, good for ML demos)
 
