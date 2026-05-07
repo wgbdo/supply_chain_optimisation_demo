@@ -12,7 +12,8 @@ plotly>=5.15
 # ML / Forecasting
 lightgbm>=4.0
 scikit-learn>=1.3
-statsforecast>=1.6
+# statsforecast is only used in pipeline steps (04_demand_forecasting.py), not the dashboard
+# Removed to avoid scipy build failure on Streamlit Cloud (no py3.14 wheel for scipy<1.17)
 
 # Optimisation
 PuLP>=2.7
