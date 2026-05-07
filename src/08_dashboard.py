@@ -77,9 +77,9 @@ stores = sorted(order_plan["store_nbr"].unique())
 selected_store = st.sidebar.selectbox("Store", stores, index=0)
 
 weeks = sorted(order_plan["week_start"].unique())
-week_labels = [pd.Timestamp(w).strftime("%Y-%m-%d") for w in weeks]
-selected_week_label = st.sidebar.selectbox("Week", week_labels, index=len(week_labels) - 1)
-selected_week = pd.Timestamp(selected_week_label)
+week_labels = ["All"] + [pd.Timestamp(w).strftime("%Y-%m-%d") for w in weeks]
+selected_week_label = st.sidebar.selectbox("Week", week_labels, index=0)
+selected_week = None if selected_week_label == "All" else pd.Timestamp(selected_week_label)
 
 families = ["All"] + sorted(order_plan["family"].dropna().unique().tolist())
 selected_family = st.sidebar.selectbox("Product Family", families, index=0)
@@ -87,10 +87,9 @@ selected_family = st.sidebar.selectbox("Product Family", families, index=0)
 show_rules_only = st.sidebar.checkbox("Show only items with active rules", value=False)
 
 # ── Apply filters ──────────────────────────────────────────────────────────────
-filtered = order_plan[
-    (order_plan["store_nbr"] == selected_store)
-    & (order_plan["week_start"] == selected_week)
-].copy()
+filtered = order_plan[order_plan["store_nbr"] == selected_store].copy()
+if selected_week is not None:
+    filtered = filtered[filtered["week_start"] == selected_week]
 
 if selected_family != "All":
     filtered = filtered[filtered["family"] == selected_family]
@@ -111,107 +110,12 @@ selected_item = st.sidebar.selectbox(
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.title("🥦 FreshBox Replenishment Dashboard")
-st.caption(f"Store {selected_store} — Week of {selected_week_label}")
+_week_display = "All Weeks" if selected_week is None else f"Week of {selected_week_label}"
+st.caption(f"Store {selected_store} — {_week_display}")
 
-# ── KPI Cards ──────────────────────────────────────────────────────────────────
-col1, col2, col3, col4, col5 = st.columns(5)
-
-total_order_cost = filtered["order_cost"].sum()
-total_items = len(filtered)
-items_with_rules = (filtered["rules_applied"] != "").sum()
-fill_rate = (
-    filtered["fulfilled"].sum() / filtered["actual_demand"].sum() * 100
-    if "fulfilled" in filtered.columns and filtered["actual_demand"].sum() > 0
-    else 0
-)
-waste_rate = (
-    filtered["waste_units"].sum() / filtered["order_qty"].sum() * 100
-    if "waste_units" in filtered.columns and filtered["order_qty"].sum() > 0
-    else 0
-)
-
-col1.metric("Total Order Value", f"${total_order_cost:,.0f}")
-col2.metric("Items to Order", total_items)
-col3.metric("Rules Active", items_with_rules)
-col4.metric("Fill Rate", f"{fill_rate:.1f}%" if fill_rate > 0 else "N/A")
-col5.metric("Est. Waste Rate", f"{waste_rate:.1f}%" if waste_rate > 0 else "N/A")
-
-st.divider()
-
-# ── Order Recommendations Table ────────────────────────────────────────────────
-st.subheader("📋 Order Recommendations")
-
-if len(filtered) == 0:
-    st.info("No data for the selected filters. Try changing the store, week, or family.")
-else:
-    # Prepare display table
-    display_cols = [
-        "item_nbr",
-        "family",
-        "perishable",
-        "on_hand",
-        "adjusted_q50",
-        "adjusted_q90",
-        "safety_stock",
-        "order_qty",
-        "order_cost",
-        "actual_demand",
-        "fulfilled",
-        "rules_applied",
-    ]
-    display = filtered[display_cols].copy()
-
-    # Per-item fill rate: fulfilled / actual_demand, capped at 100%
-    # Shows as a percentage with a traffic-light emoji so problem items stand out.
-    def fmt_fill(row):
-        if row["actual_demand"] <= 0:
-            return "N/A"
-        pct = min(row["fulfilled"] / row["actual_demand"] * 100, 100)
-        if pct >= 98:
-            icon = "🟢"
-        elif pct >= 90:
-            icon = "🟡"
-        else:
-            icon = "🔴"
-        return f"{icon} {pct:.1f}%"
-
-    display["fill_rate"] = display.apply(fmt_fill, axis=1)
-    display = display.drop(columns=["fulfilled"])
-
-    display["perishable"] = display["perishable"].map({0: "No", 1: "Yes"})
-    display.columns = [
-        "Item",
-        "Family",
-        "Perishable",
-        "On Hand",
-        "Forecast (Median)",
-        "Forecast (High)",
-        "Safety Stock",
-        "Order Qty",
-        "Order Cost ($)",
-        "Actual Demand",
-        "Rules Applied",
-        "Fill Rate",
-    ]
-
-    # Reorder so Fill Rate is visible early
-    col_order = [
-        "Item", "Family", "Perishable", "Fill Rate",
-        "On Hand", "Forecast (Median)", "Forecast (High)",
-        "Safety Stock", "Order Qty", "Order Cost ($)",
-        "Actual Demand", "Rules Applied",
-    ]
-    display = display[col_order]
-
-    st.dataframe(
-        display.sort_values("Order Cost ($)", ascending=False),
-        use_container_width=True,
-        hide_index=True,
-        height=400,
-    )
-    st.caption("🟢 ≥ 98% fill rate | 🟡 90–97% | 🔴 < 90% (stockout risk)")
-
-st.divider()
+# ══════════════════════════════════════════════════════════════════════════════
+# ALL-WEEKS OVERVIEW (always visible regardless of week filter)
+# ══════════════════════════════════════════════════════════════════════════════
 
 # ── Overall Performance Charts ─────────────────────────────────────────────────
 st.subheader("📊 Pipeline Performance (All Weeks, This Store)")
@@ -413,48 +317,155 @@ if len(_base_store) > 0 and len(_opt_store) > 0:
 
 st.divider()
 
-# ── Manual Override Section ────────────────────────────────────────────────────
-st.subheader("✏️ Manual Override")
-st.markdown(
-    "Disagree with a recommendation? Adjust the order quantity below. "
-    "Overrides are logged for future model retraining — this is how the "
-    "model learns from operator expertise over time."
+# ══════════════════════════════════════════════════════════════════════════════
+# WEEK-SPECIFIC DETAIL (select a week in the sidebar to filter, or view all)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── KPI Cards ──────────────────────────────────────────────────────────────────
+col1, col2, col3, col4, col5 = st.columns(5)
+
+total_order_cost = filtered["order_cost"].sum()
+total_items = filtered["item_nbr"].nunique()
+items_with_rules = (filtered["rules_applied"] != "").sum()
+fill_rate = (
+    filtered["fulfilled"].sum() / filtered["actual_demand"].sum() * 100
+    if "fulfilled" in filtered.columns and filtered["actual_demand"].sum() > 0
+    else 0
+)
+waste_rate = (
+    filtered["waste_units"].sum() / filtered["order_qty"].sum() * 100
+    if "waste_units" in filtered.columns and filtered["order_qty"].sum() > 0
+    else 0
 )
 
-override_col1, override_col2, override_col3 = st.columns([2, 2, 3])
+col1.metric("Total Order Value", f"${total_order_cost:,.0f}")
+col2.metric("Items to Order", total_items)
+col3.metric("Rules Active", items_with_rules)
+col4.metric("Fill Rate", f"{fill_rate:.1f}%" if fill_rate > 0 else "N/A")
+col5.metric("Est. Waste Rate", f"{waste_rate:.1f}%" if waste_rate > 0 else "N/A")
 
-with override_col1:
-    override_item = st.selectbox(
-        "Item to override",
-        sorted(filtered["item_nbr"].unique()) if len(filtered) > 0 else [],
-        key="override_item",
+st.divider()
+
+# ── Order Recommendations Table ────────────────────────────────────────────────
+st.subheader(f"📋 Order Recommendations — {_week_display}")
+
+if len(filtered) == 0:
+    st.info("No data for the selected filters. Try changing the store, week, or family.")
+else:
+    # Prepare display table
+    display_cols = [
+        "item_nbr",
+        "family",
+        "perishable",
+        "on_hand",
+        "adjusted_q50",
+        "adjusted_q90",
+        "safety_stock",
+        "order_qty",
+        "order_cost",
+        "actual_demand",
+        "fulfilled",
+        "rules_applied",
+    ]
+    display = filtered[display_cols].copy()
+
+    # Per-item fill rate: fulfilled / actual_demand, capped at 100%
+    # Shows as a percentage with a traffic-light emoji so problem items stand out.
+    def fmt_fill(row):
+        if row["actual_demand"] <= 0:
+            return "N/A"
+        pct = min(row["fulfilled"] / row["actual_demand"] * 100, 100)
+        if pct >= 98:
+            icon = "🟢"
+        elif pct >= 90:
+            icon = "🟡"
+        else:
+            icon = "🔴"
+        return f"{icon} {pct:.1f}%"
+
+    display["fill_rate"] = display.apply(fmt_fill, axis=1)
+    display = display.drop(columns=["fulfilled"])
+
+    display["perishable"] = display["perishable"].map({0: "No", 1: "Yes"})
+    display.columns = [
+        "Item",
+        "Family",
+        "Perishable",
+        "On Hand",
+        "Forecast (Median)",
+        "Forecast (High)",
+        "Safety Stock",
+        "Order Qty",
+        "Order Cost ($)",
+        "Actual Demand",
+        "Rules Applied",
+        "Fill Rate",
+    ]
+
+    # Reorder so Fill Rate is visible early
+    col_order = [
+        "Item", "Family", "Perishable", "Fill Rate",
+        "On Hand", "Forecast (Median)", "Forecast (High)",
+        "Safety Stock", "Order Qty", "Order Cost ($)",
+        "Actual Demand", "Rules Applied",
+    ]
+    display = display[col_order]
+
+    st.dataframe(
+        display.sort_values("Order Cost ($)", ascending=False),
+        use_container_width=True,
+        hide_index=True,
+        height=400,
+    )
+    st.caption("🟢 ≥ 98% fill rate | 🟡 90–97% | 🔴 < 90% (stockout risk)")
+
+st.divider()
+
+# ── Manual Override Section ────────────────────────────────────────────────────
+st.subheader("✏️ Manual Override")
+if selected_week is None:
+    st.info("Select a specific week in the sidebar to use the manual override feature.")
+else:
+    st.markdown(
+        "Disagree with a recommendation? Adjust the order quantity below. "
+        "Overrides are logged for future model retraining — this is how the "
+        "model learns from operator expertise over time."
     )
 
-with override_col2:
-    current_qty = 0
-    if len(filtered) > 0 and override_item is not None:
-        match = filtered[filtered["item_nbr"] == override_item]
-        if len(match) > 0:
-            current_qty = int(match.iloc[0]["order_qty"])
-    override_qty = st.number_input(
-        "New quantity",
-        min_value=0,
-        value=current_qty,
-        step=50,
-    )
+    override_col1, override_col2, override_col3 = st.columns([2, 2, 3])
 
-with override_col3:
-    override_reason = st.text_input("Reason for override", placeholder="e.g. Supplier warned of late delivery")
-
-if st.button("Submit Override", type="primary"):
-    if override_reason.strip():
-        st.success(
-            f"Override logged: Item {override_item} → {override_qty} units "
-            f"(was {current_qty}). Reason: {override_reason}"
+    with override_col1:
+        override_item = st.selectbox(
+            "Item to override",
+            sorted(filtered["item_nbr"].unique()) if len(filtered) > 0 else [],
+            key="override_item",
         )
-        # In production: write to a database table for model retraining feedback loop
-    else:
-        st.warning("Please provide a reason for the override.")
+
+    with override_col2:
+        current_qty = 0
+        if len(filtered) > 0 and override_item is not None:
+            match = filtered[filtered["item_nbr"] == override_item]
+            if len(match) > 0:
+                current_qty = int(match.iloc[0]["order_qty"])
+        override_qty = st.number_input(
+            "New quantity",
+            min_value=0,
+            value=current_qty,
+            step=50,
+        )
+
+    with override_col3:
+        override_reason = st.text_input("Reason for override", placeholder="e.g. Supplier warned of late delivery")
+
+    if st.button("Submit Override", type="primary"):
+        if override_reason.strip():
+            st.success(
+                f"Override logged: Item {override_item} → {override_qty} units "
+                f"(was {current_qty}). Reason: {override_reason}"
+            )
+            # In production: write to a database table for model retraining feedback loop
+        else:
+            st.warning("Please provide a reason for the override.")
 
 # ── Item-Level Detail ──────────────────────────────────────────────────────────
 # Clearly separated from the aggregate sections above. Only populated when a
