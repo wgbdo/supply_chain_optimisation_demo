@@ -7,6 +7,7 @@ env/
 # Data files — raw and processed outputs (large, not for version control)
 data/raw/
 data/processed/
+kaggle_data_files/
 
 # Python cache
 __pycache__/
