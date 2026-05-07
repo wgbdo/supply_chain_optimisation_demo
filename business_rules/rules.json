@@ -84,5 +84,20 @@
       "factor": 1.10
     },
     "rationale": "Wages are paid fortnightly on the 15th and end-of-month. Dave noticed a ~10% order bump around paydays."
+  },
+  {
+    "rule_id": "DAVE_007",
+    "name": "Zero demand suppression",
+    "sku_pattern": "*",
+    "condition": {
+      "type": "low_rolling_demand",
+      "rolling_column": "rolling_4w_mean",
+      "threshold": 5.0
+    },
+    "action": {
+      "type": "cap_forecast",
+      "cap_multiplier": 1.0
+    },
+    "rationale": "Items with a 4-week rolling average demand below 5 units/week are intermittent sellers. The ML model tends to over-forecast these because it learned average patterns. Cap the adjusted forecast at the rolling average to prevent large orders for slow-moving items."
   }
 ]

@@ -38,6 +38,17 @@ def check_condition(rule: dict, row: pd.Series) -> bool:
         month = row["week_start"].month
         return month in condition.get("months", [])
 
+    elif ctype == "low_rolling_demand":
+        # Fire when the item's rolling average demand is below the threshold.
+        # Uses a pre-computed rolling column already present in forecasts.parquet
+        # (e.g. rolling_4w_mean, rolling_12w_mean).
+        col = condition.get("rolling_column", "rolling_4w_mean")
+        threshold = condition.get("threshold", 5.0)
+        val = row.get(col, None)
+        if val is None:
+            return False
+        return float(val) < threshold
+
     return False
 
 
@@ -77,6 +88,12 @@ def apply_rules(row: pd.Series, rules: list[dict]) -> dict:
             order_qty_multiplier *= action["factor"]
         elif atype == "multiply_safety_stock":
             safety_stock_multiplier *= action["factor"]
+        elif atype == "cap_forecast":
+            # Cap the forecast at rolling_mean * cap_multiplier.
+            # Stored as a special marker — applied after the multiplier loop.
+            cap_col = rule["condition"].get("rolling_column", "rolling_4w_mean")
+            cap_val = float(row.get(cap_col, row["forecast_q50"])) * action.get("cap_multiplier", 1.0)
+            forecast_multiplier = min(forecast_multiplier, cap_val / max(row["forecast_q50"], 1e-6))
 
         rules_applied.append(rule["rule_id"])
         explanations.append(f"[{rule['rule_id']}] {rule['name']}: {rule['rationale']}")
