@@ -416,3 +416,40 @@ Open http://localhost:8501 in your browser.
 | **(s, S) policy** | Reorder policy: when inventory drops to level 's', order enough to bring it up to level 'S' |
 | **Objective function** | The thing the optimiser is trying to minimise (or maximise) — here, total cost |
 | **Constraint** | A rule the optimiser must obey — e.g. "order at least MOQ" or "don't exceed warehouse capacity" |
+
+---
+
+## Objective Function (Step 6)
+
+The MIP solver minimises total supply chain cost across all items `i` in a store-week:
+
+$$\min \sum_i \Big[ c_p \cdot q_i + w_i \cdot p_i \cdot \text{overstock}_i + c_s \cdot \text{understock}_i \Big]$$
+
+Where:
+
+| Symbol | Parameter | Value |
+|--------|-----------|-------|
+| $c_p$ | Procurement cost per unit | $4.00 |
+| $c_s$ | Stockout cost per unit | $10.00 |
+| $w_i$ | Waste cost per unit | $3.50 (non-perishable) / $8.75 (perishable, ×2.5 multiplier) |
+| $p_i$ | Waste probability | 10% (non-perishable) / 40% (perishable) |
+| $w_i \cdot p_i$ | **Effective waste cost** | **$0.35/unit** (non-perish.) / **$3.50/unit** (perish.) |
+
+The cost ratios imply a **critical ratio** (the service level the solver targets):
+
+$$CR = \frac{c_s}{c_s + w_i \cdot p_i} = \begin{cases} 96.6\% & \text{non-perishable} \\ 74.1\% & \text{perishable} \end{cases}$$
+
+This means the solver leans heavily toward avoiding stockouts for non-perishables, and is more balanced for perishables (where waste cost is significant).
+
+### Constraints
+
+| Constraint | Purpose |
+|-----------|---------|
+| `order_qty[i] + on_hand[i] ≥ demand[i] + safety_stock[i]` | Meet expected demand plus buffer |
+| `overstock[i] ≥ order_qty[i] + on_hand[i] − demand[i]` | Define overstock for cost calculation |
+| `understock[i] ≥ demand[i] − order_qty[i] − on_hand[i]` | Define understock (stockout risk) |
+| `order_qty[i] ≥ MOQ × use_supplier[i]` | Enforce minimum order quantity if ordering |
+| `Σ_i (order_qty[i] + on_hand[i]) ≤ warehouse_capacity` | Respect warehouse capacity per store |
+| `order_qty[i] ≥ 0`, integer | Whole units only |
+
+Perishable items use a conservative base demand (≈ q40 instead of q50) to avoid over-ordering short-shelf-life products.
